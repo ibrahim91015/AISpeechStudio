@@ -16,7 +16,8 @@ BLOCKS = {"address", "article", "aside", "blockquote", "caption", "dd", "div", "
           "figcaption", "figure", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "li", "main",
           "p", "pre", "section", "table", "tr", "ul", "ol"}
 HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
-HIDDEN = {"head", "nav", "script", "style", "noscript", "svg", "math", "rt", "rp", "figcaption"}
+HIDDEN = {"head", "title", "nav", "script", "style", "noscript", "svg", "math", "rt", "rp",
+          "figcaption", "object", "audio", "video"}
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
         "source", "track", "wbr", "mbp:pagebreak"}
 PAGE_CLASSES = {"pagebreak", "page-number", "pagenum", "page-num", "page_number", "page-number-marker"}
@@ -27,6 +28,8 @@ SECTION_LABEL = re.compile(r"^(?:part\b|book\s+[ivxlcdm\d]+\b|appendix\b|glossar
 METADATA_LABEL = re.compile(r"^(?:table of contents|contents|copyright|title page|dedication|"
                             r"acknowledg(?:e)?ments?|about the author|also by)(?:\W|$)", re.I)
 END_LABEL = re.compile(r"^(?:about the author|also by|copyright|contents|table of contents)\b|\bBOOK TWO OF\b", re.I)
+TAIL_CONTENTS = re.compile(r"(?:^|\n\n)Table of Contents(?=\n\n|$)", re.I)
+TAIL_BIOGRAPHY = re.compile(r"(?:^|\n\n)About the Author(?=[ \n:])")
 
 
 class BookHTML(HTMLParser):
@@ -195,6 +198,12 @@ def section_ranges(text, chapters, headings, pages, files):
     first_story = next((offset for offset, label in display_marks if STORY_LABEL.match(label)), None)
     start = first_story if first_story is not None else display_marks[0][0] if display_marks else 0
     end = next((offset for offset, label in chapters if offset > start and END_LABEL.search(label)), len(text))
+    # Older Kindle books sometimes include a printed TOC with no navigation entry of its own.
+    last_chapter = max((offset for offset, _ in display_marks if offset < end), default=start)
+    contents = TAIL_CONTENTS.search(text, max(last_chapter, end - 12_000), end)
+    if contents:
+        biography = TAIL_BIOGRAPHY.search(text, max(last_chapter, contents.start() - 5_000), contents.start())
+        end = biography.start() if biography else contents.start()
     book = text[start:end]
     if not book.strip():
         raise ValueError("No readable text found in the ebook’s reading order.")

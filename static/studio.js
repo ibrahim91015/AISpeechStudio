@@ -123,6 +123,7 @@ if (ebookPicker) {
   const through = ebookPicker.querySelector('#ebook-through');
   const status = ebookPicker.querySelector('#ebook-range-status');
   const load = ebookPicker.querySelector('#load-ebook-text');
+  const rangeKey = ebookKey + ':range';
 
   function activeBook() {
     return ebooks[Number(bookSelect.value)];
@@ -139,43 +140,54 @@ if (ebookPicker) {
     load.disabled = !length || length > editor.maxLength;
     status.textContent = length > editor.maxLength ? 'Choose a shorter range (up to 150,000 characters).' :
       length.toLocaleString() + ' characters';
+    try {
+      sessionStorage.setItem(rangeKey, JSON.stringify([bookSelect.selectedIndex, mode.value, from.selectedIndex, through.selectedIndex]));
+    } catch {}
   }
 
-  function showChoices() {
+  function showChoices(first = 0, last = 0) {
     const book = activeBook();
     mode.options[2].textContent = book.estimatedPages ? 'Pages (estimated)' : 'Pages';
     for (const select of [from, through]) {
       select.replaceChildren(...book[mode.value].map((entry, index) => new Option(entry.label, index)));
     }
+    from.selectedIndex = first < from.length ? first : 0;
+    through.selectedIndex = last < through.length && last >= from.selectedIndex ? last : from.selectedIndex;
     showRange();
   }
 
-  function showBooks() {
+  function showBooks([bookIndex = 0, browseBy = 'chapters', first = 0, last = 0] = []) {
     ebookPicker.hidden = !ebooks.length;
     if (!ebooks.length) return;
     bookSelect.replaceChildren(...ebooks.map((book, index) => new Option(book.name, index)));
+    bookSelect.selectedIndex = bookIndex < ebooks.length ? bookIndex : 0;
     ebookPicker.querySelector('#ebook-file-row').hidden = ebooks.length === 1;
-    mode.value = 'chapters';
-    showChoices();
+    mode.value = browseBy;
+    showChoices(first, last);
   }
 
   function saveBooks() {
     try {
       sessionStorage.removeItem(ebookKey);
+      sessionStorage.removeItem(rangeKey);
       if (ebooks.length) sessionStorage.setItem(ebookKey, JSON.stringify(ebooks));
     } catch { /* Large imports stay available while this page is open. */ }
   }
 
-  try { ebooks = JSON.parse(sessionStorage.getItem(ebookKey)) || []; } catch {}
-  showBooks();
+  let savedRange;
+  try {
+    ebooks = JSON.parse(sessionStorage.getItem(ebookKey)) || [];
+    savedRange = JSON.parse(sessionStorage.getItem(rangeKey)) || undefined;
+  } catch {}
+  showBooks(savedRange);
   ebookPicker.addEventListener('booksImported', event => {
     ebooks = event.detail;
     saveBooks();
     showBooks();
     if (ebooks.length) mode.focus();
   });
-  bookSelect.addEventListener('change', showChoices);
-  mode.addEventListener('change', showChoices);
+  bookSelect.addEventListener('change', () => showChoices());
+  mode.addEventListener('change', () => showChoices());
   from.addEventListener('change', () => {
     if (from.selectedIndex > through.selectedIndex) through.value = from.value;
     showRange();
