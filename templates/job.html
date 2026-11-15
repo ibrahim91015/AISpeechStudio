@@ -1,4 +1,4 @@
-<article class="job">
+<article class="job" data-job="{{ job.id }}">
   <div class="job-label"><h3>{{ job.title }}</h3><p>{{ models[job.model] }}{% if job.project_name %} · {{ job.project_name }}{% endif %}{% if job.config.detected_dialect %} · {{ dialects[job.config.detected_dialect][0] }}{% endif %}{% if job.duration %} · {{ '%.1f'|format(job.duration) }} s{% endif %}</p></div>
   {% if job.status == 'finished' %}
     <audio aria-label="Play {{ job.title }}" controls preload="none" src="/jobs/{{ job.id }}/audio"></audio>

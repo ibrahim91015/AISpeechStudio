@@ -25,10 +25,6 @@
       <label>Title <input name="title" maxlength="100" placeholder="Optional title" value="{{ reused.title if reused else '' }}"></label>
       <label>Project <select name="project"><option value="">No project</option>{% for project in projects %}<option value="{{ project.id }}"{% if reused and reused.project_id == project.id %} selected{% endif %}>{{ project.name }}</option>{% endfor %}</select></label>
     </div>
-    <div class="submit-row">
-      <button class="button primary" type="submit" name="intent" value="generate"><svg class="play-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 9 6-9 6z"/></svg>Generate audio</button>
-      <span class="inline-message" id="notice" aria-live="polite"></span>
-    </div>
   </section>
   <section class="surface settings-panel" aria-labelledby="settings-heading">
     <div class="panel-head"><div><h2 id="settings-heading">Voice &amp; settings</h2><p>Choose the model and delivery.</p></div></div>
@@ -40,6 +36,10 @@
     <details class="disclosure"><summary>Save these settings as a preset</summary><div class="preset-input"><label class="sr-only" for="preset-name">Preset name</label><input id="preset-name" name="preset_name" placeholder="Preset name" maxlength="100"><button class="button tonal" type="submit" name="intent" value="preset">Save</button></div></details>
     {% if presets %}<label>Saved preset <select id="load-preset"><option value="">Choose a preset</option>{% for preset in presets %}<option value="{{ preset.id }}">{{ preset.name }}</option>{% endfor %}</select></label>{% endif %}
   </section>
+  <div class="submit-row">
+    <button class="button primary" type="submit" name="intent" value="generate"><svg class="play-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 9 6-9 6z"/></svg>Generate audio</button>
+    <span class="inline-message" id="notice" aria-live="polite"></span>
+  </div>
 </form>
 {% include 'activity.html' %}
 <script type="application/json" id="editor-catalog">{{ {'dialects': dialects, 'examples': egyptian_examples}|tojson }}</script>

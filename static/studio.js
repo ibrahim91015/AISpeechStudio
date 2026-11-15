@@ -65,7 +65,16 @@ async function record(button) {
   }
 }
 
-if (editor) editor.addEventListener('input', refreshCount);
+if (editor) {
+  editor.addEventListener('input', refreshCount);
+  const mobileLayout = matchMedia('(max-width: 740px)');
+  const submitRow = document.querySelector('.submit-row');
+  const orderSubmit = () => {
+    document.querySelector(mobileLayout.matches ? '#speech-form' : '.script-panel').append(submitRow);
+  };
+  orderSubmit();
+  mobileLayout.addEventListener('change', orderSubmit);
+}
 
 document.addEventListener('change', async (event) => {
   const el = event.target;
@@ -111,10 +120,36 @@ document.addEventListener('click', (event) => {
 });
 
 document.addEventListener('htmx:beforeSwap', (event) => {
-  if (event.detail.target?.id !== 'activity') return;
-  const isPoll = event.detail.xhr.responseURL.endsWith('/activity');
-  if (isPoll && [...event.detail.target.querySelectorAll('audio')].some((audio) => !audio.paused)) {
-    event.detail.shouldSwap = false;
+  const target = event.detail.target;
+  if (target?.id !== 'activity' || !event.detail.xhr.responseURL.endsWith('/activity')) return;
+  const next = new DOMParser().parseFromString(event.detail.serverResponse, 'text/html').querySelector('#activity');
+  const list = target.querySelector('.job-list');
+  const nextList = next?.querySelector('.job-list');
+  if (!list || !nextList) return;
+  event.detail.shouldSwap = false;
+  target.querySelector('.status-pill').replaceWith(next.querySelector('.status-pill'));
+  const existing = new Map([...list.children].map((row) => [row.dataset.job, row]));
+  for (const row of [...nextList.children].reverse()) {
+    const old = existing.get(row.dataset.job);
+    existing.delete(row.dataset.job);
+    if (!old) {
+      list.prepend(row);
+      htmx.process(row);
+    } else if (old.innerHTML !== row.innerHTML && !old.contains(document.activeElement)) {
+      old.replaceWith(row);
+      htmx.process(row);
+    } else if (old.contains(document.activeElement)) {
+      const label = old.querySelector('.job-progress span');
+      const nextLabel = row.querySelector('.job-progress span');
+      const progress = old.querySelector('progress');
+      const nextProgress = row.querySelector('progress');
+      if (label && nextLabel) label.textContent = nextLabel.textContent;
+      if (progress && nextProgress) progress.value = nextProgress.value;
+    }
+  }
+  for (const row of existing.values()) {
+    const audio = row.querySelector('audio');
+    if (!row.contains(document.activeElement) && !(audio && audio.currentTime > 0 && !audio.ended)) row.remove();
   }
 });
 
