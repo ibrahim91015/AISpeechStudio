@@ -16,6 +16,7 @@ PLAYABLE = {
     "mov": ("audio/mp4", {"aac"}),
 }
 INPUT_OPTIONS = ["-protocol_whitelist", "file", "-format_whitelist", FORMATS]
+MAX_VOICE_BYTES = 25 * 1024 * 1024
 
 
 def convert(path, dest, *args, timeout=30):
@@ -25,8 +26,8 @@ def convert(path, dest, *args, timeout=30):
 
 
 def store_voice(uid, upload, name=None):
-    if not upload.size or upload.size > 24 * 1024 * 1024:
-        raise ValueError("Upload a reference clip up to 24 MB.")
+    if not upload.size or upload.size > MAX_VOICE_BYTES:
+        raise ValueError("Upload a reference clip up to 25 MB.")
     key = uuid.uuid4().hex
     original_name = upload.filename.replace("\\", "/").rsplit("/", 1)[-1][:255] or "Recording"
     name = name or original_name.rsplit(".", 1)[0][:100] or "Recording"

@@ -1,9 +1,9 @@
 {% extends 'base.html' %}
 {% block body %}
 <div class="page-heading"><h1>Speech studio</h1><p>Write a script, choose a voice, and render your audio.</p></div>
-<form class="studio-grid" action="/jobs" method="post" enctype="multipart/form-data"
+<form class="studio-grid" action="/jobs" method="post" enctype="multipart/form-data" autocomplete="off"
       hx-post="/jobs" hx-encoding="multipart/form-data" hx-target="#notice" hx-disabled-elt="find button[value=generate], find button[value=preset]" id="speech-form" data-upload-progress="submission-progress">
-  {% if reused %}<input type="hidden" name="reused" value="{{ reused.id }}">{% endif %}
+  <input type="hidden" name="reused" value="{{ reused.id if reused else '' }}">
   <section class="surface script-panel" aria-labelledby="script-heading">
     <div class="panel-head"><div><h2 id="script-heading">Script</h2><p id="import-help">Drop TXT, Markdown, Word, PDF, or other text files into the editor.</p></div>
       <label class="button tonal import-label"><input class="sr-only" type="file" id="import-text" accept="{{ import_extensions }}" aria-label="Import text or document files" multiple>Import text</label>
@@ -13,14 +13,15 @@
     <p id="import-status" aria-live="polite" class="inline-message" hidden></p>
     {% with upload_id='import-progress', upload_label='Uploading documents' %}{% include 'upload_progress.html' %}{% endwith %}
     <div class="editor-bar"><span id="character-count" class="counter">{{ text|length }} characters</span><div class="editor-actions">
-      <button class="quiet" type="button" id="sample-text">Use sample</button>
+      <button class="quiet" type="button" id="sample-text"{% if model == 'lahgtna' %} hidden{% endif %}>Use sample</button>
+      <button class="quiet" type="button" id="random-text"{% if model != 'lahgtna' %} hidden{% endif %}>Random Arabic sample</button>
       <button class="quiet" type="button" id="clear-text">Clear</button>
     </div></div>
     <div class="marks" id="arabic-tools"{% if model != 'lahgtna' %} hidden{% endif %}>
       <span>Arabic diacritics</span>
       <div class="mark-controls">
       {% for label, mark in tashkil.items() %}<button type="button" data-mark="{{ mark }}" aria-label="{{ label }}" title="{{ label }}">◌{{ mark }}</button>{% endfor %}
-      <button class="quiet remove-marks" id="remove-marks" type="button">Remove</button><button class="quiet" id="random-text" type="button">Random Egyptian example</button>
+      <button class="quiet remove-marks" id="remove-marks" type="button">Remove</button>
       </div>
     </div>
     <div class="script-meta">
@@ -45,5 +46,5 @@
   </div>
 </form>
 {% include 'activity.html' %}
-<script type="application/json" id="editor-catalog">{{ {'dialects': dialects, 'examples': egyptian_examples}|tojson }}</script>
+<script type="application/json" id="editor-catalog">{{ dialects|tojson }}</script>
 {% endblock %}

@@ -1,9 +1,11 @@
+import asyncio
 import json
 import shutil
 import sqlite3
 import time
 import uuid
 from contextlib import asynccontextmanager
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
@@ -13,9 +15,10 @@ from fastapi.templating import Jinja2Templates
 from starlette.datastructures import UploadFile
 from starlette.concurrency import run_in_threadpool
 
-from catalog import DIALECTS, EGYPTIAN_EXAMPLES, FLAGS, MODELS, QWEN_LANGUAGES, SPEAKERS, TASHKIL, controls, defaults, settings_from
+from catalog import BUILTIN_VOICES, DIALECTS, EMOTIONS, FLAGS, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, SPEAKERS, TASHKIL, controls, defaults, settings_from
 from documents import IMPORT_EXTENSIONS, MAX_TEXT, import_document
 from queue_worker import Worker
+import shares
 from storage import JOBS, REFERENCES, ROOT, VOICES, connect, one, rows, setup
 from voice_media import store_voice
 
@@ -25,15 +28,29 @@ async def lifespan(app):
     setup()
     worker = Worker()
     worker.start()
-    yield
-    await run_in_threadpool(worker.close)
+    app.state.share_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mp3")
+
+    async def clear_shares():
+        while True:
+            await run_in_threadpool(shares.cleanup)
+            await asyncio.sleep(3600)
+
+    cleanup = asyncio.create_task(clear_shares())
+    try:
+        yield
+    finally:
+        cleanup.cancel()
+        await asyncio.gather(cleanup, return_exceptions=True)
+        await run_in_threadpool(app.state.share_worker.shutdown, wait=False, cancel_futures=True)
+        await run_in_threadpool(worker.close)
 
 
 app = FastAPI(title="AI Speech Studio", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 templates = Jinja2Templates(directory=ROOT / "templates")
 templates.env.globals.update(models=MODELS, dialects=DIALECTS, languages=QWEN_LANGUAGES, speakers=SPEAKERS,
-                             flags=FLAGS, controls=controls, tashkil=TASHKIL, egyptian_examples=EGYPTIAN_EXAMPLES,
+                             flags=FLAGS, controls=controls, tashkil=TASHKIL, builtin_voices=BUILTIN_VOICES,
+                             index_languages=INDEX_LANGUAGES, emotions=EMOTIONS,
                              import_extensions=",".join(IMPORT_EXTENSIONS), max_text=MAX_TEXT)
 
 
@@ -46,8 +63,17 @@ async def prevent_cross_site_posts(request, call_next):
 
 
 def current_user(request):
-    profile_id = request.cookies.get("studio_profile", "1")
-    return one("SELECT * FROM users WHERE id=?", (profile_id,)) or one("SELECT * FROM users WHERE id=1")
+    profile_id = request.cookies.get("studio_profile")
+    return one("SELECT * FROM users WHERE id=?", (profile_id,)) or one(
+        "SELECT users.* FROM users JOIN site_profile ON users.id=site_profile.user_id WHERE singleton=1")
+
+
+def reference_file(uid, key):
+    if key.startswith("dialect:"):
+        builtin = BUILTIN_VOICES.get(key.removeprefix("dialect:"))
+        return REFERENCES / builtin[1] if builtin else None
+    if one("SELECT id FROM voices WHERE id=? AND user_id=?", (key, uid)):
+        return VOICES / f"{key}.wav"
 
 
 def render(request, template, **data):
@@ -87,6 +113,10 @@ def job_for(uid, key):
     return item
 
 
+def library_redirect(project):
+    return RedirectResponse(f"/library?project={int(project)}" if str(project).isdigit() else "/library", 303)
+
+
 @app.get("/health")
 def health():
     return health_data()
@@ -104,8 +134,10 @@ def studio(request: Request, model: str = "qwen", preset: int | None = None, reu
     config = defaults(model)
     if source:
         config.update(json.loads(source["settings"]))
-    if config.get("voice_id") and not one("SELECT id FROM voices WHERE id=? AND user_id=?", (config["voice_id"], uid)):
+    if config.get("voice_id") and not reference_file(uid, config["voice_id"]):
         config["voice_id"] = ""
+    if config.get("emo_voice") and not reference_file(uid, config["emo_voice"]):
+        config["emo_voice"] = ""
     return render(request, "studio.html", page="studio", model=model, config=config, reused=previous,
                   text=previous["script"] if previous else "", jobs=history(uid, limit=8), state=health_data(), **lookups(uid))
 
@@ -123,10 +155,13 @@ def activity(request: Request):
 
 
 @app.get("/library", response_class=HTMLResponse)
-def library(request: Request, project: int | None = None):
+def library(request: Request, project: str = ""):
     uid = current_user(request)["id"]
+    selected = one("SELECT id FROM projects WHERE id=? AND user_id=?", (project, uid))
+    project = selected["id"] if selected else None
     return render(request, "library.html", page="library", jobs=history(uid, project, 150), selected=project,
-                  profiles=rows("SELECT * FROM users ORDER BY name"), **lookups(uid))
+                  default_profile=one("SELECT user_id FROM site_profile WHERE singleton=1")["user_id"],
+                  profiles=rows("SELECT * FROM users ORDER BY name COLLATE NOCASE"), **lookups(uid))
 
 
 @app.get("/voices", response_class=HTMLResponse)
@@ -151,10 +186,24 @@ async def extract_text(request: Request):
 
 @app.get("/references/{dialect}")
 def reference_audio(dialect: str):
-    config = DIALECTS.get(dialect)
-    if not config or not config[1]:
+    config = BUILTIN_VOICES.get(dialect)
+    if not config:
         raise HTTPException(404, "No reference for this dialect.")
     return FileResponse(REFERENCES / config[1])
+
+
+@app.post("/voices/upload")
+async def upload_voice(request: Request):
+    uid = current_user(request)["id"]
+    async with request.form(max_files=1, max_fields=0) as form:
+        upload = form.get("reference")
+        if not isinstance(upload, UploadFile) or not upload.filename:
+            raise HTTPException(400, "Choose a reference audio file.")
+        try:
+            key = await run_in_threadpool(store_voice, uid, upload)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    return one("SELECT id,name FROM voices WHERE id=? AND user_id=?", (key, uid))
 
 
 @app.get("/voices/{key}/audio")
@@ -185,6 +234,44 @@ def job_audio(request: Request, key: str, download: bool = False):
     return FileResponse(path, filename=f"{job['title']}.{extension}" if download else None)
 
 
+def share_source(request, key):
+    job = job_for(current_user(request)["id"], key)
+    path = JOBS / key / f"speech.{json.loads(job['settings'])['format']}"
+    if job["status"] != "finished" or not job["duration"] or not path.is_file():
+        raise HTTPException(404, "Recording unavailable.")
+    return job, path
+
+
+@app.get("/jobs/{key}/share")
+def share_options(request: Request, key: str):
+    job, path = share_source(request, key)
+    options = shares.options(path, job["duration"])
+    for option in options:
+        option.update(shares.status(key, option["rate"]))
+    return {"options": options}
+
+
+@app.post("/jobs/{key}/share/{rate}")
+def create_share(request: Request, key: str, rate: int):
+    job, path = share_source(request, key)
+    if rate not in {option["rate"] for option in shares.options(path, job["duration"])}:
+        raise HTTPException(400, "Choose a smaller MP3 preset.")
+    return shares.start(request.app.state.share_worker, key, rate, path, job["duration"])
+
+
+@app.get("/jobs/{key}/share/{rate}")
+def share_status(request: Request, key: str, rate: int, download: bool = False):
+    job, _ = share_source(request, key)
+    if rate not in shares.BITRATES:
+        raise HTTPException(404, "Unknown MP3 preset.")
+    if not download:
+        return shares.status(key, rate)
+    path = shares.path_for(key, rate)
+    if not shares.available(path):
+        raise HTTPException(404, "The share expired. Create a new copy.")
+    return FileResponse(path, filename=f"{job['title']} - {rate} kbps.mp3", media_type="audio/mpeg")
+
+
 def submit_error(request, message):
     if request.headers.get("HX-Request"):
         return render(request, "notice.html", message=message, error=True)
@@ -210,7 +297,7 @@ def notify_voice(response, voice, queue=False):
 @app.post("/jobs")
 async def create_job(request: Request):
     uid = current_user(request)["id"]
-    async with request.form(max_files=2, max_fields=60, max_part_size=512000) as form:
+    async with request.form(max_files=2, max_fields=100, max_part_size=MAX_TEXT * 4) as form:
         model = form.get("model", "")
         if model not in MODELS:
             return submit_error(request, "Choose a TTS model.")
@@ -223,8 +310,11 @@ async def create_job(request: Request):
             if project and not one("SELECT id FROM projects WHERE id=? AND user_id=?", (project, uid)):
                 raise ValueError("Choose a project from your library.")
             selected_voice = config.get("voice_id")
-            if selected_voice and not one("SELECT id FROM voices WHERE id=? AND user_id=?", (selected_voice, uid)):
+            if selected_voice and not reference_file(uid, selected_voice):
                 raise ValueError("Choose a reference voice from your library.")
+            emotion_voice = config.get("emo_voice")
+            if config.get("emo_mode") == "audio" and (not emotion_voice or not reference_file(uid, emotion_voice)):
+                raise ValueError("Choose a reference recording for the emotion.")
             is_preset = form.get("intent") == "preset"
             reference = form.get("reference")
             if is_preset:
@@ -234,10 +324,12 @@ async def create_job(request: Request):
                 if not text or len(text) > MAX_TEXT:
                     raise ValueError("Enter between 1 and 150,000 characters of text.")
                 title = name_from(form, "title", " ".join(text.split())[:60])
-            if model == "lahgtna" and isinstance(reference, UploadFile) and reference.filename:
+            if model in {"lahgtna", "index"} and isinstance(reference, UploadFile) and reference.filename:
                 selected_voice = await run_in_threadpool(store_voice, uid, reference)
                 config["voice_id"] = selected_voice
                 saved_voice = one("SELECT id,name FROM voices WHERE id=?", (selected_voice,))
+            if model == "index" and not selected_voice:
+                raise ValueError("Choose or upload a reference voice for IndexTTS.")
             if is_preset:
                 with connect() as db:
                     db.execute("INSERT INTO presets(user_id,name,model,settings) VALUES (?,?,?,?) ON CONFLICT(user_id,name) DO UPDATE SET model=excluded.model, settings=excluded.settings",
@@ -246,14 +338,16 @@ async def create_job(request: Request):
                 return notify_voice(response, saved_voice)
             folder.mkdir()
             reused = form.get("reused")
-            if model == "lahgtna":
+            if model in {"lahgtna", "index"}:
                 dest = folder / "reference.wav"
                 if selected_voice:
-                    shutil.copyfile(VOICES / f"{selected_voice}.wav", dest)
+                    shutil.copyfile(reference_file(uid, selected_voice), dest)
                 elif reused and job_for(uid, reused):
                     source = JOBS / reused / "reference.wav"
                     if source.is_file():
                         shutil.copyfile(source, dest)
+            if emotion_voice:
+                shutil.copyfile(reference_file(uid, emotion_voice), folder / "emotion.wav")
             with connect() as db:
                 db.execute("INSERT INTO jobs(id,user_id,project_id,model,title,script,settings,status) VALUES (?,?,?,?,?,?,?,'queued')",
                            (key, uid, project, model, title, text, json.dumps(config)))
@@ -276,6 +370,61 @@ def cancel_job(request: Request, key: str):
     return activity(request) if request.headers.get("HX-Request") else RedirectResponse("/library", 303)
 
 
+@app.post("/jobs/{key}/rename")
+async def rename_job(request: Request, key: str):
+    uid = current_user(request)["id"]
+    async with request.form(max_fields=2) as form:
+        try:
+            title = name_from(form)
+        except ValueError as exc:
+            return submit_error(request, str(exc))
+        with connect() as db:
+            changed = db.execute("UPDATE jobs SET title=? WHERE id=? AND user_id=?",
+                                 (title, key, uid)).rowcount
+        if not changed:
+            raise HTTPException(404, "Recording not found.")
+        return library_redirect(form.get("view"))
+
+
+def edit_recordings(uid, keys, action, project=None):
+    if not keys or action not in {"delete", "move"}:
+        raise HTTPException(400, "Select recordings and an action.")
+    placeholders = ",".join("?" for _ in keys)
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        records = db.execute(f"SELECT id,status FROM jobs WHERE user_id=? AND id IN ({placeholders})",
+                             (uid, *keys)).fetchall()
+        if len(records) != len(keys):
+            raise HTTPException(404, "A selected recording is no longer available.")
+        if action == "move":
+            if project and not db.execute("SELECT id FROM projects WHERE id=? AND user_id=?", (project, uid)).fetchone():
+                raise HTTPException(400, "Choose a project from your library.")
+            db.execute(f"UPDATE jobs SET project_id=? WHERE user_id=? AND id IN ({placeholders})",
+                       (project or None, uid, *keys))
+        else:
+            if any(row["status"] in {"running", "queued"} for row in records):
+                raise HTTPException(409, "Cancel active jobs before deleting them.")
+            db.execute(f"DELETE FROM jobs WHERE user_id=? AND id IN ({placeholders})", (uid, *keys))
+    if action == "delete":
+        for key in keys:
+            shutil.rmtree(JOBS / key, ignore_errors=True)
+
+
+@app.post("/jobs/{key}/delete")
+async def delete_job(request: Request, key: str):
+    async with request.form(max_fields=1) as form:
+        edit_recordings(current_user(request)["id"], [key], "delete")
+        return library_redirect(form.get("view"))
+
+
+@app.post("/library/recordings")
+async def manage_recordings(request: Request):
+    async with request.form(max_fields=160) as form:
+        edit_recordings(current_user(request)["id"], list(dict.fromkeys(form.getlist("recording"))),
+                        form.get("intent"), form.get("destination"))
+        return library_redirect(form.get("view"))
+
+
 @app.post("/library/{kind}")
 async def save_library(request: Request, kind: str):
     uid = current_user(request)["id"]
@@ -286,7 +435,7 @@ async def save_library(request: Request, kind: str):
                 with connect() as db:
                     db.execute("INSERT OR IGNORE INTO users(name) VALUES (?)", (name,))
                     chosen = db.execute("SELECT id FROM users WHERE name=?", (name,)).fetchone()[0]
-                response = RedirectResponse("/library", 303)
+                response = RedirectResponse("/library#profiles", 303)
                 response.set_cookie("studio_profile", str(chosen), httponly=True, samesite="lax", max_age=60*60*24*365)
                 return response
             if kind == "projects":
@@ -319,7 +468,21 @@ async def rename_voice(request: Request, key: str):
                              (name, key, current_user(request)["id"])).rowcount
     if not changed:
         raise HTTPException(404, "Voice not found.")
-    return RedirectResponse("/voices", 303)
+    return JSONResponse({"id": key, "name": name}) if request.headers.get("accept") == "application/json" else RedirectResponse("/voices", 303)
+
+
+@app.post("/library/profile")
+async def choose_profile(request: Request):
+    async with request.form(max_fields=2) as form:
+        profile = one("SELECT id FROM users WHERE id=?", (form.get("profile"),))
+        if not profile:
+            raise HTTPException(404, "Profile not found.")
+        if form.get("intent") == "default":
+            with connect() as db:
+                db.execute("UPDATE site_profile SET user_id=? WHERE singleton=1", (profile["id"],))
+    response = RedirectResponse("/library#profiles", 303)
+    response.set_cookie("studio_profile", str(profile["id"]), httponly=True, samesite="lax", max_age=60*60*24*365)
+    return response
 
 
 @app.post("/library/{kind}/{key}/delete")

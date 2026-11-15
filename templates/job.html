@@ -1,8 +1,13 @@
 <article class="job" data-job="{{ job.id }}" data-status="{{ job.status }}">
   <div class="job-label"><h3>{{ job.title }}</h3><p>{{ models[job.model] }}{% if job.project_name %} · {{ job.project_name }}{% endif %}{% if job.config.detected_dialect %} · {{ dialects[job.config.detected_dialect][0] }}{% endif %}{% if job.duration %} · {{ '%.1f'|format(job.duration) }} s{% endif %}</p></div>
+  {% if page == 'library' and job.status not in ('running', 'queued') %}
+    <label class="check recording-pick" hidden><input type="checkbox" form="bulk-recordings" name="recording" value="{{ job.id }}">Select {{ job.title }}</label>
+  {% endif %}
   {% if job.status == 'finished' %}
     <audio aria-label="Play {{ job.title }}" controls preload="none" src="/jobs/{{ job.id }}/audio"></audio>
-    <div class="job-actions"><a class="button tonal" href="/jobs/{{ job.id }}/audio?download=true">Download {{ job.config.format|upper }}</a><a class="quiet" href="/?reuse={{ job.id }}">Reopen</a></div>
+    <div class="job-actions"><a class="button tonal" href="/jobs/{{ job.id }}/audio?download=true">Download {{ job.config.format|upper }}</a><a class="quiet" href="/?reuse={{ job.id }}">Reopen</a>
+      {% if page == 'library' %}<button class="quiet" type="button" data-share="{{ job.id }}" data-title="{{ job.title }}">Remux</button>{% endif %}
+    </div>
   {% elif job.status in ('queued','running') %}
     <div class="job-progress">
       {% if job.phase == 'Generating speech' %}
@@ -16,5 +21,20 @@
     <form action="/jobs/{{ job.id }}/cancel" method="post"{% if page != 'library' %} hx-post="/jobs/{{ job.id }}/cancel" hx-target="#activity" hx-swap="outerHTML"{% endif %}><button class="button outlined" type="submit"{% if job.cancel %} disabled{% endif %}>Cancel</button></form>
   {% else %}
     <span class="{% if job.error %}notice-error{% endif %}">{{ job.error or job.status|capitalize }}</span><a class="quiet" href="/?reuse={{ job.id }}">Reopen</a>
+  {% endif %}
+  {% if page == 'library' and job.status not in ('running', 'queued') %}
+    <details class="voice-edit recording-manage">
+      <summary class="quiet" aria-label="Manage {{ job.title }}">Manage</summary>
+      <form class="add-form" method="post" action="/jobs/{{ job.id }}/rename">
+        <input type="hidden" name="view" value="{{ selected or '' }}">
+        <label class="sr-only" for="recording-{{ job.id }}">New name for {{ job.title }}</label>
+        <input id="recording-{{ job.id }}" name="name" value="{{ job.title }}" maxlength="100" required>
+        <button class="button tonal">Rename</button>
+      </form>
+      <form method="post" action="/jobs/{{ job.id }}/delete" data-confirm="Permanently delete this recording and its audio?">
+        <input type="hidden" name="view" value="{{ selected or '' }}">
+        <button class="quiet danger" aria-label="Delete {{ job.title }}">Delete recording</button>
+      </form>
+    </details>
   {% endif %}
 </article>

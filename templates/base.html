@@ -6,11 +6,13 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#15131b">
   <title>{% block title %}AI Speech Studio{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/studio.css">
   <script defer src="/static/htmx.min.js"></script>
   <script defer src="/static/studio.js"></script>
+  {% if page == 'library' %}<script defer src="/static/library.js"></script>{% endif %}
 </head>
-<body>
+<body data-profile="{{ profile.id }}">
 <a class="skip" href="#main">Skip to content</a>
 <header class="topbar">
   <div class="top-inner">

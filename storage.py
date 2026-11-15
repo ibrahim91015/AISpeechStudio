@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS worker_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton=1), model TEXT, last_seen REAL NOT NULL
 );
 INSERT OR IGNORE INTO users(id,name) VALUES (1,'Studio');
+CREATE TABLE IF NOT EXISTS site_profile (
+    singleton INTEGER PRIMARY KEY CHECK (singleton=1), user_id INTEGER NOT NULL REFERENCES users(id)
+);
+INSERT OR IGNORE INTO site_profile(singleton,user_id) VALUES (1,1);
 """
 
 

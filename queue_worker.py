@@ -170,7 +170,8 @@ class Worker:
         update(key, phase="Preparing voice", total=len(chunks))
         reference = folder / "reference.wav"
         prepared = self.send(key, {"op": "prepare", "script": script, "settings": settings,
-                                   "reference": str(reference) if reference.exists() else None})
+                                   "reference": str(reference) if reference.exists() else None,
+                                   "emotion": str(folder / "emotion.wav") if settings.get("emo_voice") else None})
         if prepared.get("dialect") and settings["dialect"] == "auto":
             settings["detected_dialect"] = prepared["dialect"]
             update(key, settings=json.dumps(settings))

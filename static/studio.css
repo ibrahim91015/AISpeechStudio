@@ -144,6 +144,21 @@ progress { width: 100%; height: 8px; }
 .voice-edit summary.quiet { display: list-item; width: fit-content; }
 .voice-edit .add-form { max-width: 440px; }
 .voice-edit .danger { color: var(--error); }
+.danger, .button.danger { color: var(--error); }
+.library-controls { display: flex; align-items: center; gap: 8px; }
+.bulk-recordings { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; padding: 12px; }
+.bulk-recordings select { width: auto; max-width: 100%; }
+.recording-pick { grid-row: 1; padding: 0; align-items: center; min-height: 32px; }
+.recording-manage { margin-right: auto; }
+.new-profile { margin-top: 10px; }
+.share-dialog { width: min(calc(100% - 32px), 480px); color: var(--ink); }
+.share-dialog::backdrop { background: #09070bc9; }
+.share-dialog > :not(.section-head), .share-content > * + * { margin-top: 12px; }
+.share-content p { font-size: .85rem; }
+.emotion-panel { min-width: 0; }
+.emotion-panel > :is(audio, .button) { margin-top: 7px; }
+#name-latest-voice { align-items: end; }
+#name-latest-voice label { flex: 1; }
 @media (max-width: 960px) { .job { grid-template-columns: 1fr 1fr; } .job-actions { grid-column: 1 / -1; } }
 @media (max-width: 740px) {
   .main { padding: 26px 16px 42px; }
@@ -165,5 +180,6 @@ progress { width: 100%; height: 8px; }
   .topbar nav { grid-column: 1 / -1; grid-row: 2; min-height: 42px; }
   .topbar nav a { padding-inline: 14px; }
   .voices-grid > :last-child { grid-row: 1; }
+  .library-main .section-head { align-items: start; flex-direction: column; gap: 8px; }
 }
 @media (max-width: 370px) { .script-meta { grid-template-columns: 1fr; } }

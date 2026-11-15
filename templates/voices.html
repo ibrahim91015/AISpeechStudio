@@ -1,9 +1,9 @@
 {% extends 'base.html' %}
 {% block title %}Voices · AI Speech Studio{% endblock %}
 {% block body %}
-<div class="page-heading"><h1>Voices</h1><p>Save reference clips for voice cloning in Lahgtna Chatterbox.</p></div>
+<div class="page-heading"><h1>Voices</h1><p>Save and manage reference clips for voice cloning.</p></div>
 <div class="library-grid voices-grid">
-  <section aria-labelledby="saved-voices-heading">
+  <section id="saved-voices" aria-labelledby="saved-voices-heading">
     <div class="section-head"><h2 id="saved-voices-heading">Saved clips</h2><span class="counter">{{ voices|length }} {{ 'clip' if voices|length == 1 else 'clips' }}</span></div>
     {% if voices %}
     <div class="voice-list">
@@ -34,15 +34,16 @@
     {% else %}<div class="empty">Your uploaded reference clips will appear here.</div>{% endif %}
   </section>
   <section class="surface" aria-labelledby="upload-voice-heading">
-    <div class="panel-head"><div><h2 id="upload-voice-heading">Upload a voice</h2><p>Choose a clear clip of one speaker. Up to 24 MB.</p></div></div>
-    <form class="add-voice" action="/library/voices" method="post" enctype="multipart/form-data"
-          hx-post="/library/voices" hx-encoding="multipart/form-data" hx-target="#voice-notice" hx-disabled-elt="find button" data-upload-progress="voice-upload-progress">
-      <label>Voice name <input name="name" required maxlength="100"></label>
-      <label>Audio file <input name="reference" type="file" accept="audio/*,.webm,.m4a,.aiff,.aac,.caf,.wma,.wav,.flac,.mp3,.ogg,.opus" required></label>
-      <button class="button primary">Save voice</button>
+    <div class="panel-head"><div><h2 id="upload-voice-heading">Upload voices</h2><p>Choose one or more clips. Up to 25 MB per file.</p></div></div>
+    <div class="add-voice">
+      <label>Audio files <input id="voice-files" type="file" accept="audio/*,.webm,.m4a,.aiff,.aac,.caf,.wma,.wav,.flac,.mp3,.ogg,.opus" multiple></label>
+      <form id="name-latest-voice" class="add-form">
+        <label>Voice name <input id="new-voice-name" name="name" required maxlength="100" disabled></label>
+        <button class="button tonal">Rename</button>
+      </form>
       <span id="voice-notice" class="inline-message" aria-live="polite"></span>
-      {% with upload_id='voice-upload-progress', upload_label='Uploading audio clip' %}{% include 'upload_progress.html' %}{% endwith %}
-    </form>
+      {% with upload_id='voice-upload-progress', upload_label='Uploading audio clips' %}{% include 'upload_progress.html' %}{% endwith %}
+    </div>
   </section>
 </div>
 {% endblock %}

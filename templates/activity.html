@@ -3,7 +3,7 @@
   <div class="section-head"><h2 id="activity-heading">Activity</h2><span class="status-pill"><i class="status-dot{% if state.pending %} busy{% endif %}"></i>{% if not state.worker %}Worker starting{% elif state.pending %}Server queue · {{ state.pending }} active or queued{% else %}Worker ready{% endif %}</span></div>
   <div class="gpu-progress" id="gpu-progress">
     {% set stage = state.lifecycle %}
-    {% if stage.total and stage.target %}
+    {% if stage.total and stage.target and stage.phase != 'released' %}
       {% set percent = (100 * stage.step / stage.total)|round|int %}
       {% if stage.phase == 'loading' %}
         {% set action = ['Starting the GPU worker','Loading the checkpoint','Synchronizing GPU weights'][stage.step] %}

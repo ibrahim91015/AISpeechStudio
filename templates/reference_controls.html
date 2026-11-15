@@ -1,0 +1,37 @@
+{% macro options(selected) -%}
+  {% if voices %}<optgroup label="Uploaded voices">{% for voice in voices %}<option value="{{ voice.id }}"{% if selected == voice.id %} selected{% endif %}>{{ voice.name }}</option>{% endfor %}</optgroup>{% endif %}
+  <optgroup label="Built-in dialect voices">{% for key, voice in builtin_voices.items() %}<option value="dialect:{{ key }}"{% if selected == ('dialect:' ~ key) %} selected{% endif %}>{{ voice[0] }}</option>{% endfor %}</optgroup>
+{%- endmacro %}
+<label>Reference voice
+  <select name="voice_id" id="voice-id">
+    <option value="">{{ ('Dialect reference · ' ~ dialects[config.dialect][0]) if model == 'lahgtna' else 'Choose a voice' }}</option>
+    {{ options(config.voice_id) }}
+  </select>
+</label>
+<audio id="reference-preview" controls preload="none" aria-label="Preview selected reference" hidden></audio>
+<div class="file-actions">
+  <label class="button tonal import-label"><input class="sr-only" id="reference" type="file" accept="audio/*,.webm,.m4a,.caf,.wma" aria-label="Upload reference audio">Upload audio</label>
+  <button class="button outlined" id="record-reference" type="button">Record</button>
+</div>
+<small>Uploaded clips are saved to <a href="/voices">Voices</a>.</small>
+<small id="reference-status" aria-live="polite" hidden></small>
+{% with upload_id='reference-upload-progress', upload_label='Uploading reference audio' %}{% include 'upload_progress.html' %}{% endwith %}
+{% if model == 'index' %}
+  <label>Emotion source
+    <select name="emo_mode" id="emotion-mode">
+      {% for key, label in [('speaker','Speaker voice'), ('audio','Separate reference audio'), ('vector','Emotion sliders'), ('text','Text description')] %}
+      <option value="{{ key }}"{% if config.emo_mode == key %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <div class="emotion-panel" data-emotion="audio"{% if config.emo_mode != 'audio' %} hidden{% endif %}>
+    <label>Emotion reference<select name="emo_voice" id="emotion-voice"><option value="">Choose a voice</option>{{ options(config.emo_voice) }}</select></label>
+    <audio id="emotion-preview" controls preload="none" aria-label="Preview emotion reference" hidden></audio>
+    <label class="button tonal import-label"><input class="sr-only" id="emotion-reference" type="file" accept="audio/*,.webm,.m4a" aria-label="Upload emotion reference">Upload emotion audio</label>
+  </div>
+  <div class="emotion-panel field-grid" data-emotion="vector"{% if config.emo_mode != 'vector' %} hidden{% endif %}>
+    {% for label in emotions %}<label>{{ label }}<input type="number" name="emotion_{{ loop.index0 }}" min="0" max="1" step=".01" value="{{ config.emo_vector[loop.index0] }}"></label>{% endfor %}
+  </div>
+  <label data-emotion="text"{% if config.emo_mode != 'text' %} hidden{% endif %}>Emotion description<textarea name="emo_text" rows="2" placeholder="e.g. Quiet excitement">{{ config.emo_text }}</textarea></label>
+  <small>Pronunciation annotations in the script can use Chinese Pinyin, English CMU phonemes, or Japanese Kana. <a href="https://github.com/index-tts/index-tts#pronunciation-control" target="_blank" rel="noopener">Syntax examples</a></small>
+{% endif %}

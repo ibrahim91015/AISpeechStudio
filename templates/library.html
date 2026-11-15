@@ -4,7 +4,18 @@
 <div class="page-heading"><h1>Library</h1><p>Find recordings, reference voices, and saved settings.</p></div>
 <div class="library-grid">
   <section class="library-main" aria-labelledby="recordings-heading">
-    <div class="section-head"><h2 id="recordings-heading">Recordings</h2><form action="/library"><label class="sr-only" for="project-filter">Filter by project</label><select name="project" id="project-filter" data-autosubmit><option value="">All projects</option>{% for p in projects %}<option value="{{ p.id }}"{% if selected == p.id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></form></div>
+    <div class="section-head"><h2 id="recordings-heading">Recordings</h2><div class="library-controls">
+      <form action="/library"><label class="sr-only" for="project-filter">Filter by project</label><select name="project" id="project-filter" data-autosubmit><option value="">All projects</option>{% for p in projects %}<option value="{{ p.id }}"{% if selected == p.id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></form>
+      {% if jobs %}<button type="button" class="button tonal" id="select-recordings" aria-pressed="false">Select</button>{% endif %}
+    </div></div>
+    <form method="post" action="/library/recordings" id="bulk-recordings" class="surface bulk-recordings" hidden>
+      <input type="hidden" name="view" value="{{ selected or '' }}">
+      <span id="selected-count" aria-live="polite"></span>
+      <label class="sr-only" for="destination">Move selected recordings to</label>
+      <select name="destination" id="destination"><option value="">No project</option>{% for p in projects %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}</select>
+      <button class="button tonal" name="intent" value="move">Move to project</button>
+      <button class="button outlined danger" name="intent" value="delete">Delete selected</button>
+    </form>
     {% if jobs %}<div class="job-list">{% for job in jobs %}{% include 'job.html' %}{% endfor %}</div>{% else %}<div class="empty">No recordings in this view. <a href="/">Go to Studio</a></div>{% endif %}
   </section>
   <aside class="library-side">
@@ -12,7 +23,26 @@
     {% for p in projects %}<div class="library-item"><a href="/library?project={{ p.id }}">{{ p.name }}</a><form action="/library/projects/{{ p.id }}/delete" method="post"><button class="quiet" aria-label="Remove project {{ p.name }}">Remove</button></form></div>{% endfor %}</section>
     <section class="surface"><h2>Reference voices</h2><p>{{ voices|length }} saved {{ 'clip' if voices|length == 1 else 'clips' }}</p><a href="/voices" class="button tonal">Manage voices</a></section>
     <section class="surface"><h2>Generation presets</h2>{% for p in presets %}<div class="library-item"><a href="/?preset={{ p.id }}">{{ p.name }}</a><form action="/library/presets/{{ p.id }}/delete" method="post"><button class="quiet" aria-label="Remove preset {{ p.name }}">Remove</button></form></div>{% else %}<p>Save a preset from Voice &amp; settings in the studio.</p>{% endfor %}</section>
-    <section class="surface" id="profiles"><h2>Profiles</h2><form action="/library/profiles" method="post" class="add-form"><label class="sr-only" for="profile-name">Choose or enter profile name</label><input id="profile-name" list="profile-names" name="name" value="{{ profile.name }}" maxlength="100" required><datalist id="profile-names">{% for p in profiles %}<option value="{{ p.name }}">{% endfor %}</datalist><button class="button tonal">Switch</button></form><p>Anyone who can reach this server can use its profiles.</p></section>
+    <section class="surface" id="profiles"><h2>Profiles</h2>
+      <form action="/library/profile" method="post" class="add-form">
+        <label class="sr-only" for="profile-choice">Current profile</label><select name="profile" id="profile-choice" data-autosubmit>{% for p in profiles %}<option value="{{ p.id }}"{% if profile.id == p.id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>
+        <button class="button tonal" name="intent" value="default"{% if profile.id == default_profile %} disabled{% endif %}>{{ 'Is default' if profile.id == default_profile else 'Set default' }}</button>
+      </form>
+      <form action="/library/profiles" method="post" class="add-form new-profile"><label class="sr-only" for="profile-name">New profile name</label><input id="profile-name" name="name" placeholder="New profile name" maxlength="100" required><button class="button tonal">Add</button></form>
+      <p>The default profile opens for new visitors.</p>
+    </section>
   </aside>
 </div>
+<dialog class="surface share-dialog" id="share-dialog" aria-labelledby="share-heading">
+  <div class="section-head"><h2 id="share-heading">Share as MP3</h2><form method="dialog"><button class="quiet" type="submit">Close</button></form></div>
+  <p id="share-title"></p>
+  <form class="share-content" id="share-form">
+    <label>File size <select id="share-rate" required></select></label>
+    <p>Sizes are estimates until conversion finishes. Share copies expire after 24 hours.</p>
+    <button type="submit" class="button primary">Convert to MP3</button>
+  </form>
+  <div id="share-progress" class="upload-progress" hidden><div class="progress-label"><span aria-live="polite">Converting MP3</span><span></span></div><progress max="100" value="0" aria-label="MP3 conversion"></progress></div>
+  <span aria-live="polite" id="share-notice"></span>
+  <a class="button tonal" id="share-download" href="#" hidden>Download MP3</a>
+</dialog>
 {% endblock %}
