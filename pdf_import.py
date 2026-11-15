@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -57,6 +58,51 @@ def reflow_pdf(page):
                        for block in paragraphs)
 
 
+def sentence_end(text):
+    return text.rstrip('”’"»)]').endswith((".", "?", "!", "…", "؟", "。"))
+
+
+def print_paragraphs(layout):
+    lines = layout.strip("\n").splitlines()
+    widths = [len(line.strip()) for line in lines if line.strip()]
+    if len(widths) < 4:
+        return reflow_pdf(layout)
+    margin = min(len(line) - len(line.lstrip()) for line in lines if line.strip())
+    width = sorted(widths)[len(widths) * 3 // 4]
+    if width < 35:
+        return reflow_pdf(layout)
+    if not any(2 <= len(line) - len(line.lstrip()) - margin <= 12 for line in lines if line.strip()):
+        return reflow_pdf(layout)
+    paragraphs, current = [], []
+    for line in lines:
+        text = line.strip()
+        indent = len(line) - len(line.lstrip()) - margin
+        new_paragraph = (
+            not text or (2 <= indent <= 12 and current and
+                         sentence_end(current[-1]) and len(current[-1]) < width * .93)
+        )
+        if new_paragraph and current:
+            paragraphs.append(" ".join(current))
+            current = []
+        if text:
+            current.append(text)
+    if current:
+        paragraphs.append(" ".join(current))
+    return "\n\n".join(paragraphs)
+
+
+def join_print_pages(pages, layout):
+    parts = []
+    for page, shape in zip(pages, layout):
+        if not page.strip():
+            continue
+        same_text = shape and " ".join(page.split()) == " ".join(shape.split())
+        result = print_paragraphs(shape) if same_text else reflow_pdf(page)
+        continued = parts and result[0].islower() and not sentence_end(parts[-1])
+        parts.extend((" " if continued else "\n\n", result))
+    return "".join(parts).strip()
+
+
 def scan_pages(path, pages, missing, work, limit):
     warnings = []
     deadline = time.monotonic() + 35
@@ -84,12 +130,13 @@ def scan_pages(path, pages, missing, work, limit):
     return warnings
 
 
-def pdf_text(data, max_text):
+def pdf_text(upload, max_text):
     limit = max_text * 6
     with tempfile.TemporaryDirectory() as folder:
         work = Path(folder)
         path = work / "source.pdf"
-        path.write_bytes(data)
+        with path.open("wb") as target:
+            shutil.copyfileobj(upload, target)
         try:
             native = command_text(["pdftotext", "-enc", "UTF-8", str(path), "-"], 15, limit)
         except subprocess.CalledProcessError as exc:
@@ -109,5 +156,16 @@ def pdf_text(data, max_text):
             # Some PDFs tag only part of their visible content.
             if tagged and sum(map(str.isalnum, tagged)) >= .98 * sum(map(str.isalnum, native)):
                 return tagged, []
-        warnings = scan_pages(path, pages, missing, work, limit) if missing else []
-        return "\n\n".join(reflow_pdf(page) for page in pages if page.strip()), warnings
+        # A few image-only pages in a long born-digital PDF are often cover art or illustrations.
+        sparse_art = len(pages) >= 100 and len(missing) * 30 < len(pages)
+        if missing and sparse_art:
+            warnings = [f"{len(missing)} pages had no text layer and were skipped."]
+        else:
+            warnings = scan_pages(path, pages, missing, work, limit) if missing else []
+        try:
+            layout = command_text(["pdftotext", "-layout", "-enc", "UTF-8", str(path), "-"], 15, limit * 2).split("\f")
+        except (subprocess.SubprocessError, ValueError):
+            layout = []
+        if not layout or len(layout) < len(pages):
+            layout = [""] * len(pages)
+        return join_print_pages(pages, layout), warnings

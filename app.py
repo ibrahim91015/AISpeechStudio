@@ -22,7 +22,7 @@ from starlette.requests import ClientDisconnect
 from catalog import ARABIC_SAMPLES, DIALECTS, EMOTIONS, FLAGS, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, REFERENCE_VOICES, SPEAKERS, TASHKIL, controls, defaults, settings_from
 from catalog import CHATTERBOX_LANGUAGES, HIGGS_MODELS, REFERENCE_MODELS, REQUIRED_REFERENCE, TRANSCRIPT_MODELS
 from demo_voices import CLIPS, COLLECTION_CLIPS, edited_transcript, reference_filename, transcript_record, voice_collections
-from documents import IMPORT_EXTENSIONS, MAX_TEXT, import_document
+from documents import IMPORT_EXTENSIONS, MAX_BYTES, MAX_IMPORT_TEXT, MAX_TEXT, import_document
 from queue_worker import Worker
 from notification_events import device_id, enqueue, speech_event
 from push_delivery import Endpoint, PushDelivery, Subscription, valid_endpoint, valid_key
@@ -80,6 +80,7 @@ templates.env.globals.update(models=MODELS, dialects=DIALECTS, languages=QWEN_LA
                              index_languages=INDEX_LANGUAGES, chatterbox_languages=CHATTERBOX_LANGUAGES, higgs_models=HIGGS_MODELS,
                              emotions=EMOTIONS, arabic_samples=ARABIC_SAMPLES,
                              import_extensions=",".join(IMPORT_EXTENSIONS), max_text=MAX_TEXT,
+                             max_import_text=MAX_IMPORT_TEXT, max_document_bytes=MAX_BYTES,
                              studio_js_version=studio_js_version, studio_css_version=studio_css_version,
                              transcript_models=TRANSCRIPT_MODELS,
                              notifications_js_version=notifications_js_version)

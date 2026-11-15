@@ -1,6 +1,6 @@
-import io
 import posixpath
 import re
+import shutil
 import subprocess
 import tempfile
 import zipfile
@@ -11,7 +11,6 @@ from urllib.parse import unquote, urlsplit
 from defusedxml.ElementTree import fromstring
 
 
-EBOOK_LIMIT = 2_000_000
 BLOCKS = {"address", "article", "aside", "blockquote", "caption", "dd", "div", "dl", "dt",
           "figcaption", "figure", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "li", "main",
           "p", "pre", "section", "table", "tr", "ul", "ol"}
@@ -23,11 +22,14 @@ VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "met
 PAGE_CLASSES = {"pagebreak", "page-number", "pagenum", "page-num", "page_number", "page-number-marker"}
 METADATA_TYPES = {"cover", "titlepage", "halftitlepage", "copyright-page", "toc", "landmarks",
                   "page-list", "acknowledgments", "imprint", "colophon"}
-STORY_LABEL = re.compile(r"^(?:prologue\b|chapter\b|part\b|\d+(?:[.:\s]|$))", re.I)
-SECTION_LABEL = re.compile(r"^(?:part\b|book\s+[ivxlcdm\d]+\b|appendix\b|glossary\b|ars arcanum\b)", re.I)
+STORY_LABEL = re.compile(r"^(?:prelude\b|prologue\b|chapter\b|part\b|\d+(?:[.:\s]|$))", re.I)
+SECTION_LABEL = re.compile(r"^(?:part\b|book\s+(?:one|two|three|four|five|[ivxlcdm\d]+)\b|"
+                           r"appendix\b|glossary\b|ars arcanum\b|endnote\b)", re.I)
 METADATA_LABEL = re.compile(r"^(?:table of contents|contents|copyright|title page|dedication|"
                             r"acknowledg(?:e)?ments?|about the author|also by)(?:\W|$)", re.I)
-END_LABEL = re.compile(r"^(?:about the author|also by|copyright|contents|table of contents)\b|\bBOOK TWO OF\b", re.I)
+END_LABEL = re.compile(r"^(?:about the author|also by|copyright|contents|table of contents)\b|"
+                       r"\bBOOK TWO OF\b", re.I)
+BY_AUTHOR = re.compile(r"^By (?:[^\W\d_]+ +){1,3}[^\W\d_]+$", re.I)
 TAIL_CONTENTS = re.compile(r"(?:^|\n\n)Table of Contents(?=\n\n|$)", re.I)
 TAIL_BIOGRAPHY = re.compile(r"(?:^|\n\n)About the Author(?=[ \n:])")
 
@@ -191,13 +193,21 @@ def approximate_pages(text, start, end):
 
 
 def section_ranges(text, chapters, headings, pages, files):
-    chapters = ordered_marks(chapters or headings or files)
+    chapters = sorted(chapters or headings or files, key=lambda mark: mark[0])
     if not chapters:
         chapters = [(0, "Entire book")]
     display_marks = [(offset, label) for offset, label in chapters if not METADATA_LABEL.match(label)]
     first_story = next((offset for offset, label in display_marks if STORY_LABEL.match(label)), None)
     start = first_story if first_story is not None else display_marks[0][0] if display_marks else 0
-    end = next((offset for offset, label in chapters if offset > start and END_LABEL.search(label)), len(text))
+    end = len(text)
+    for index, (offset, label) in enumerate(chapters):
+        if offset <= start:
+            continue
+        credits = (BY_AUTHOR.match(label) and index + 1 < len(chapters)
+                   and chapters[index + 1][1].lower().startswith("copyright"))
+        if credits or END_LABEL.search(label):
+            end = offset
+            break
     # Older Kindle books sometimes include a printed TOC with no navigation entry of its own.
     last_chapter = max((offset for offset, _ in display_marks if offset < end), default=start)
     contents = TAIL_CONTENTS.search(text, max(last_chapter, end - 12_000), end)
@@ -208,10 +218,11 @@ def section_ranges(text, chapters, headings, pages, files):
     if not book.strip():
         raise ValueError("No readable text found in the ebook’s reading order.")
 
-    chapters = [(offset, label) for offset, label in display_marks
-                if start <= offset < end and not SECTION_LABEL.match(label)]
-    sections = [(offset, label) for offset, label in display_marks
-                if start <= offset < end and SECTION_LABEL.match(label)]
+    # A part divider consisting of artwork can have the same offset as the next chapter.
+    chapters = ordered_marks((offset, label) for offset, label in display_marks
+                             if start <= offset < end and not SECTION_LABEL.match(label))
+    sections = ordered_marks((offset, label) for offset, label in display_marks
+                             if start <= offset < end and SECTION_LABEL.match(label))
     if not chapters:
         chapters = sections.copy()
     if chapters and chapters[0][0] > start:
@@ -253,7 +264,7 @@ def section_ranges(text, chapters, headings, pages, files):
             "sections": ranges(sections, "Section"), "pages": ranges(pages, "Page")}
 
 
-def epub_content(data, decode, limit):
+def epub_content(data, decode, limit, max_text):
     with zipfile.ZipFile(data) as archive:
         container = fromstring(archive_member(archive, "META-INF/container.xml", limit))
         package_path = container.find(".//{*}rootfile").attrib["full-path"]
@@ -268,7 +279,7 @@ def epub_content(data, decode, limit):
                   for ref in package.findall("./{*}guide/{*}reference")
                   if ref.get("type") in METADATA_TYPES and ref.get("href")}
         locations, headings, pages, files, blocks = {}, [], [], [], []
-        position = archive_size = 0
+        position = archive_size = characters = 0
         for ref in spine.findall("./{*}itemref"):
             item = manifest.get(ref.get("idref"))
             if item is None or ref.get("linear") == "no" or "nav" in item.get("properties", "").split():
@@ -284,16 +295,23 @@ def epub_content(data, decode, limit):
                 raise ValueError("The ebook’s markup is too large to import. Split it before importing.")
             parser = read_html(decode(markup))
             locations[(path, "")] = position
+            text = parser.text
+            if text and len(text) < 12_000:
+                first_line = text.split("\n", 1)[0].strip()
+                if re.fullmatch(r"copyright(?: page)?", first_line, re.I) or (
+                    re.search(r"\bISBN\b", text) and re.search(r"all rights reserved|copyright", text, re.I)
+                ):
+                    continue
             for name, offset in parser.anchors.items():
                 locations[(path, name)] = position + offset
             headings.extend((position + offset, label) for offset, label in parser.headings)
             pages.extend((position + offset, label) for offset, label in parser.pages)
-            text = parser.text
             if text:
                 files.append((position, f"Section {len(files) + 1}"))
                 position += len(text) + 2
-                if position > EBOOK_LIMIT + 2:
-                    raise ValueError("The ebook exceeds 2 million characters. Split it before importing.")
+                characters += len(text.encode("utf-16-le")) // 2 + 2
+                if characters > max_text + 2:
+                    raise ValueError("The ebook exceeds 5 million characters. Split it before importing.")
                 blocks.append(text)
         chapters = [(locations[link], label) for link, label in toc if link in locations]
         for link, label in page_list:
@@ -302,19 +320,23 @@ def epub_content(data, decode, limit):
     return section_ranges("\n\n".join(blocks), chapters, headings, pages, files)
 
 
-def ebook_content(data, extension, decode, limit):
+def ebook_content(upload, extension, decode, limit, max_text):
     if extension == ".epub":
-        return epub_content(io.BytesIO(data), decode, limit)
-    if data[60:68] not in {b"BOOKMOBI", b"TEXtREAd"}:
+        return epub_content(upload, decode, limit, max_text)
+    header = upload.read(86)
+    if header[60:68] not in {b"BOOKMOBI", b"TEXtREAd"}:
         raise ValueError("This is not a supported MOBI or Kindle document.")
-    record = int.from_bytes(data[78:82], "big")
-    if not 86 <= record <= len(data) - 16:
+    record = int.from_bytes(header[78:82], "big")
+    if not 86 <= record <= upload.seek(0, 2) - 16:
         raise ValueError("The Kindle document is incomplete or damaged.")
-    if int.from_bytes(data[record + 12:record + 14], "big"):
+    upload.seek(record + 12)
+    if int.from_bytes(upload.read(2), "big"):
         raise ValueError("This Kindle document is DRM-protected. Choose an unprotected copy.")
     with tempfile.TemporaryDirectory() as work:
         path = Path(work) / "book.mobi"
-        path.write_bytes(data)
+        upload.seek(0)
+        with path.open("wb") as target:
+            shutil.copyfileobj(upload, target)
         subprocess.run(["mobitool", "-e", "-o", work, str(path)], stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL, check=True, timeout=20)
-        return epub_content(Path(work) / "book.epub", decode, limit)
+        return epub_content(Path(work) / "book.epub", decode, limit, max_text)

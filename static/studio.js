@@ -1,4 +1,5 @@
 const editor = document.querySelector('#script');
+const generationLimit = Number(editor?.dataset.generationLimit);
 let recorder = null;
 let importing = false;
 let voiceUpload = null;
@@ -138,8 +139,8 @@ if (ebookPicker) {
   function showRange() {
     const length = rangeText().length;
     load.disabled = !length || length > editor.maxLength;
-    status.textContent = length > editor.maxLength ? 'Choose a shorter range (up to 150,000 characters).' :
-      length.toLocaleString() + ' characters';
+    status.textContent = length.toLocaleString() + ' characters' +
+      (length > generationLimit ? ' · Select a passage of up to 150,000 characters to generate audio.' : '');
     try {
       sessionStorage.setItem(rangeKey, JSON.stringify([bookSelect.selectedIndex, mode.value, from.selectedIndex, through.selectedIndex]));
     } catch {}
@@ -222,7 +223,7 @@ async function importFiles(files) {
   showProgress(progress, 'Uploading documents', 0);
   try {
     for (const file of files) {
-      if (file.size > 12 * 1024 * 1024) throw new Error(file.name + ' exceeds 12 MB.');
+      if (file.size > Number(editor.dataset.documentLimit)) throw new Error(file.name + ' exceeds 65 MB.');
       const result = await uploadFile('/import-text', 'document', file, (fraction) => {
         const percent = fraction === null || !total ? null : Math.floor(100 * (uploaded + fraction * file.size) / total);
         showProgress(progress, fraction === 1 ? 'Reading ' + file.name : 'Uploading documents', percent);
@@ -235,12 +236,13 @@ async function importFiles(files) {
       const {text} = result;
       warnings.push(...(result.warnings || []));
       length += text.length + (texts.length ? 2 : 0);
-      if (length > editor.maxLength) throw new Error('The combined text exceeds 150,000 characters.');
+      if (length > editor.maxLength) throw new Error('The combined text exceeds 5 million characters.');
       texts.push(text);
     }
     if (texts.length) {
       if (editor.value !== initial) throw new Error('The script changed during import. Drop the files again to replace it.');
       replaceText(texts.join('\n\n'));
+      if (length > generationLimit) warnings.push('Select up to 150,000 characters in the script to generate that passage.');
     }
     status.classList.add('notice-ok');
     const imported = files.length === 1 ? 'Imported ' + files[0].name + '.' : 'Imported ' + files.length + ' files.';
@@ -795,6 +797,23 @@ document.addEventListener('submit', (event) => {
   }
   const message = event.target.dataset.confirm;
   if (message && !window.confirm(message)) event.preventDefault();
+});
+
+document.addEventListener('htmx:configRequest', (event) => {
+  const {elt, formData} = event.detail;
+  if (elt !== studioForm || editor.value.length <= generationLimit) return;
+  if (formData.get('intent') === 'preset') {
+    formData.delete('script');
+    return;
+  }
+  const selection = editor.value.slice(editor.selectionStart, editor.selectionEnd).trim();
+  if (selection && selection.length <= generationLimit) {
+    formData.set('script', selection);
+    return;
+  }
+  event.preventDefault();
+  document.querySelector('#notice').textContent = 'Select a passage of up to 150,000 characters to generate audio.';
+  editor.focus();
 });
 
 document.addEventListener('htmx:beforeRequest', (event) => {

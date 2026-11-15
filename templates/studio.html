@@ -14,7 +14,7 @@
       <label class="button tonal import-label"><input class="sr-only" type="file" id="import-text" accept="{{ import_extensions }}" aria-label="Import text or document files" multiple>Import text</label>
     </div>
     <label class="sr-only" for="script">Script text</label>
-    <textarea id="script" name="script" dir="auto" rows="12" maxlength="{{ max_text }}" placeholder="Enter the text you want to hear…" spellcheck="false" aria-describedby="import-help import-status">{{ text }}</textarea>
+    <textarea id="script" name="script" dir="auto" rows="12" maxlength="{{ max_import_text }}" data-generation-limit="{{ max_text }}" data-document-limit="{{ max_document_bytes }}" placeholder="Enter the text you want to hear…" spellcheck="false" aria-describedby="import-help import-status">{{ text }}</textarea>
     <p id="import-status" aria-live="polite" class="inline-message" hidden></p>
     <section id="ebook-picker" aria-labelledby="ebook-picker-title" hidden>
       <div class="ebook-picker-head"><strong id="ebook-picker-title">Choose ebook text</strong><button type="button" class="quiet" id="close-ebook">Close</button></div>

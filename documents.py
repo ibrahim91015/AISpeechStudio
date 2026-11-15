@@ -1,5 +1,4 @@
 import codecs
-import io
 import re
 import subprocess
 import zipfile
@@ -14,8 +13,10 @@ from ebooks import ebook_content, html_text
 from pdf_import import pdf_text
 
 
-MAX_BYTES = 12 * 1024 * 1024
+MAX_BYTES = 65 * 1024 * 1024
+MAX_MEMBER_BYTES = 24 * 1024 * 1024
 MAX_TEXT = 150_000
+MAX_IMPORT_TEXT = 5_000_000
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".xml", ".yaml",
                    ".yml", ".log", ".srt", ".vtt", ".rst"}
 EBOOK_EXTENSIONS = {".epub", ".mobi"}
@@ -37,9 +38,9 @@ def plain_text(data):
 
 
 def office_text(data, extension):
-    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+    with zipfile.ZipFile(data) as archive:
         member = archive.getinfo("word/document.xml" if extension == ".docx" else "content.xml")
-        if member.file_size > MAX_BYTES:
+        if member.file_size > MAX_MEMBER_BYTES:
             raise ValueError("The document’s text is too large to import.")
         xml = fromstring(archive.read(member))
     if extension == ".docx":
@@ -95,32 +96,33 @@ def import_document(upload):
     if extension not in IMPORT_EXTENSIONS:
         raise ValueError("Choose a supported file such as PDF, DOCX, EPUB, MOBI, or TXT.")
     if not upload.size or upload.size > MAX_BYTES:
-        raise ValueError("Choose a nonempty document up to 12 MB.")
-    data = upload.file.read(MAX_BYTES + 1)
+        raise ValueError("Choose a nonempty document up to 65 MB.")
     warnings = []
     try:
+        if extension in EBOOK_EXTENSIONS:
+            return ebook_content(upload.file, extension, plain_text, MAX_MEMBER_BYTES, MAX_IMPORT_TEXT)
         if extension in {".docx", ".odt"}:
-            result = office_text(data, extension)
+            result = office_text(upload.file, extension)
         elif extension == ".pdf":
-            result, warnings = pdf_text(data, MAX_TEXT)
-        elif extension in EBOOK_EXTENSIONS:
-            return ebook_content(data, extension, plain_text, MAX_BYTES)
-        elif extension in {".html", ".htm", ".xhtml"}:
-            result = html_text(plain_text(data))
-        elif extension in {".srt", ".vtt"}:
-            result = caption_text(data)
-        elif extension == ".rtf":
-            result = rtf_to_text(data.decode("latin-1"))
+            result, warnings = pdf_text(upload.file, MAX_IMPORT_TEXT)
         else:
-            result = plain_text(data)
+            data = upload.file.read(MAX_BYTES + 1)
+            if extension in {".html", ".htm", ".xhtml"}:
+                result = html_text(plain_text(data))
+            elif extension in {".srt", ".vtt"}:
+                result = caption_text(data)
+            elif extension == ".rtf":
+                result = rtf_to_text(data.decode("latin-1"))
+            else:
+                result = plain_text(data)
     except (AttributeError, KeyError, LookupError, RecursionError, UnicodeError, zipfile.BadZipFile, ParseError,
             DefusedXmlException, subprocess.SubprocessError, OSError) as exc:
         raise ValueError("Could not read this document. Check that it opens and is unlocked.") from exc
     result = result.replace("\r\n", "\n").replace("\r", "\n").strip()
     if not result:
         raise ValueError("No readable text found. For scanned PDFs, try a clearer scan or an export with a text layer.")
-    if len(result.encode("utf-16-le")) > MAX_TEXT * 2:
-        raise ValueError("The document exceeds 150,000 characters. Split it before importing.")
+    if len(result.encode("utf-16-le")) > MAX_IMPORT_TEXT * 2:
+        raise ValueError("The document exceeds 5 million characters. Split it before importing.")
     if any(ord(char) < 32 and char not in "\n\t\f" for char in result):
         raise ValueError("The file does not contain readable text.")
     return {"text": result, "warnings": warnings}
