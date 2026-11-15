@@ -18,7 +18,7 @@ MAX_BYTES = 12 * 1024 * 1024
 MAX_TEXT = 150_000
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".xml", ".yaml",
                    ".yml", ".log", ".srt", ".vtt", ".rst"}
-EBOOK_EXTENSIONS = {".epub", ".mobi", ".azw", ".azw3"}
+EBOOK_EXTENSIONS = {".epub", ".mobi"}
 IMPORT_EXTENSIONS = sorted(TEXT_EXTENSIONS | EBOOK_EXTENSIONS | {".docx", ".odt", ".pdf", ".rtf", ".html", ".htm", ".xhtml"})
 WORD = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 WORD_STRICT = "{http://purl.oclc.org/ooxml/wordprocessingml/main}"

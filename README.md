@@ -38,7 +38,7 @@ Long scripts run in sequential, punctuation-aware chunks. PCM is written to disk
 
 The Voices page keeps original uploads for playback and download. Lahgtna uses the first 30 seconds as its conditioning clip. Studio uploads and microphone clips also enter Voices.
 
-Drop documents into the script editor or use **Import text**. EPUB and unprotected Kindle books open a range picker. Pages are estimated when the book has no page markers. The generation limit is 150,000 characters per script. On Ubuntu, install poppler-utils, libmobi-tools, tesseract-ocr-eng, and tesseract-ocr-ara for PDF, Kindle, and scan import.
+Drop documents into the script editor or use **Import text**. EPUB and unprotected MOBI books open a range picker. Pages are estimated when the book has no page markers. The generation limit is 150,000 characters per script. On Ubuntu, install poppler-utils, libmobi-tools, tesseract-ocr-eng, and tesseract-ocr-ara for PDF, MOBI, and scan import.
 
 Voice uploads begin on selection. A tab-local draft preserves text and per-model settings until the page is manually reloaded. Library MP3 share copies expire after one day, with hourly file cleanup.
 
