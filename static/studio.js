@@ -536,7 +536,8 @@ document.addEventListener('htmx:afterSwap', (event) => {
   const toggle = document.querySelector('#live-stats-toggle');
   const key = 'aispeech-live-stats';
   let enabled = false;
-  let pending = false;
+  let suspended = false;
+  let request;
   let timer;
   try { enabled = localStorage.getItem(key) === '1'; } catch {}
   const formatDevice = device => [
@@ -547,38 +548,69 @@ document.addEventListener('htmx:afterSwap', (event) => {
   const formatMemory = memory => memory ?
     gib(memory.used) + ' GiB used · ' + gib(memory.free) + ' GiB free · ' + memory.percent + '%' : 'Unavailable';
   const show = (name, value) => { banner.querySelector('[data-stat="' + name + '"]').textContent = value; };
+  const active = () => enabled && !suspended && !document.hidden && document.hasFocus();
+
+  function stop() {
+    clearTimeout(timer);
+    timer = undefined;
+    request?.abort();
+    request = undefined;
+  }
+
   async function refresh() {
-    if (!enabled || document.hidden || pending) return;
-    pending = true;
+    timer = undefined;
+    if (!active() || request) return;
+    const controller = new AbortController();
+    request = controller;
+    const timeout = setTimeout(() => controller.abort(), 4000);
     try {
-      const response = await fetch('/system-stats', {cache: 'no-store', signal: AbortSignal.timeout(4000)});
+      const response = await fetch('/system-stats', {cache: 'no-store', signal: controller.signal});
       if (!response.ok) throw new Error('Stats unavailable');
       const stats = await response.json();
+      if (request !== controller || !active()) return;
       show('gpu', formatDevice(stats.gpu));
       show('cpu', formatDevice(stats.cpu));
       show('vram', formatMemory(stats.vram));
       show('ram', formatMemory(stats.ram));
     } catch {
-      for (const name of ['gpu', 'cpu', 'vram', 'ram']) show(name, 'Unavailable');
+      if (request === controller && active()) {
+        for (const name of ['gpu', 'cpu', 'vram', 'ram']) show(name, 'Unavailable');
+      }
     } finally {
-      pending = false;
+      clearTimeout(timeout);
+      if (request === controller) {
+        request = undefined;
+        if (active()) timer = setTimeout(refresh, 3000);
+      }
     }
   }
+
+  function updatePolling() {
+    if (!active()) stop();
+    else if (!request && timer === undefined) refresh();
+  }
+
   function apply() {
     banner.hidden = !enabled;
     if (toggle) toggle.checked = enabled;
-    clearInterval(timer);
-    if (enabled) {
-      refresh();
-      timer = setInterval(refresh, 3000);
-    }
+    updatePolling();
   }
   toggle?.addEventListener('change', () => {
     enabled = toggle.checked;
     try { localStorage.setItem(key, enabled ? '1' : '0'); } catch {}
     apply();
   });
-  document.addEventListener('visibilitychange', refresh);
+  document.addEventListener('visibilitychange', updatePolling);
+  window.addEventListener('focus', updatePolling);
+  window.addEventListener('blur', stop);
+  window.addEventListener('pagehide', () => {
+    suspended = true;
+    stop();
+  });
+  window.addEventListener('pageshow', () => {
+    suspended = false;
+    updatePolling();
+  });
   window.addEventListener('storage', event => {
     if (event.key !== key) return;
     enabled = event.newValue === '1';

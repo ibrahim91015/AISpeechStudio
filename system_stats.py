@@ -64,7 +64,7 @@ def gpu_stats():
 class Stats:
     def __init__(self):
         self.lock = Lock()
-        self.previous_ticks = cpu_ticks()
+        self.previous_ticks = None
         self.last_sample = 0
         self.cached = {}
 
