@@ -22,7 +22,7 @@ class Cancelled(Exception):
     pass
 
 
-def chunk_text(text, limit):
+def chunk_text(text, limit, preserve_annotations=False):
     rest = text.strip()
     while len(rest) > limit:
         search = rest[:limit + 1]
@@ -32,6 +32,12 @@ def chunk_text(text, limit):
             cut = limit
             while cut > 1 and unicodedata.combining(rest[cut]):
                 cut -= 1
+        if preserve_annotations:
+            opening = rest.rfind("<", 0, cut)
+            if opening > rest.rfind(">", 0, cut):
+                closing = rest.find(">", cut, cut + 4096)
+                if closing >= 0 and "|" in rest[opening:closing] and "<" not in rest[opening + 1:closing]:
+                    cut = opening or closing + 1
         yield rest[:cut].strip()
         rest = rest[cut:].lstrip()
     if rest:
@@ -163,7 +169,7 @@ class Worker:
         script = job["script"]
         if job["model"] == "lahgtna" and not settings["keep_tags"]:
             script = re.sub(r"\[[^\]\n]{1,40}\]", "", script)
-        chunks = list(chunk_text(script, settings["chunk_size"]))
+        chunks = list(chunk_text(script, settings["chunk_size"], preserve_annotations=job["model"] == "index"))
         if not chunks:
             raise ValueError("The text has no spoken content after removing tags.")
         self.load(job["model"], key)

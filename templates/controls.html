@@ -21,6 +21,7 @@
       {% for key, label in flags.items() %}<label class="check"><input type="checkbox" name="{{ key }}" value="1"{% if config[key] %} checked{% endif %}>{{ label }}</label>{% endfor %}
     {% elif model == 'index' %}
       {% for key, label in [('do_sample','Sample speech tokens'), ('text_normalization','Normalize input text'), ('emo_random','Randomize emotion reference')] %}<label class="check"><input type="checkbox" name="{{ key }}" value="1"{% if config[key] %} checked{% endif %}>{{ label }}</label>{% endfor %}
+      <label>Glossary for English and Chinese<textarea name="glossary" rows="3" placeholder="One term = spoken form per line">{{ config.glossary }}</textarea></label>
     {% else %}<label class="check"><input type="checkbox" name="keep_tags" value="1"{% if config.keep_tags %} checked{% endif %}>Keep expression tags</label>{% endif %}
   </details>
   <details class="disclosure">

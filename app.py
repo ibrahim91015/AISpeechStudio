@@ -471,7 +471,7 @@ async def rename_voice(request: Request, key: str):
     return JSONResponse({"id": key, "name": name}) if request.headers.get("accept") == "application/json" else RedirectResponse("/voices", 303)
 
 
-@app.post("/library/profile")
+@app.post("/profiles/select")
 async def choose_profile(request: Request):
     async with request.form(max_fields=2) as form:
         profile = one("SELECT id FROM users WHERE id=?", (form.get("profile"),))

@@ -60,7 +60,7 @@ document.querySelectorAll('[data-share]').forEach(button => button.addEventListe
     rates.replaceChildren(...options.map(option => new Option(
       option.name + ' · ' + option.rate + ' kbps · ' + formatSize(option.bytes), option.rate)));
     shareForm.hidden = options.length === 0;
-    submitShare.disabled = false;
+    submitShare.disabled = rates.disabled = false;
     shareNotice.textContent = options.length ? '' : 'This recording is already smaller than the available MP3 presets.';
   } catch (error) {
     if (version === dialogVersion) shareNotice.textContent = error.message;

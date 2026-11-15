@@ -15,8 +15,13 @@ try {
   if (performance.getEntriesByType('navigation')[0]?.type === 'reload') {
     for (const key of Object.keys(sessionStorage)) if (key.startsWith(draftPrefix)) sessionStorage.removeItem(key);
   }
-  if (!new URLSearchParams(location.search).size) {
+  const url = new URLSearchParams(location.search);
+  if (!url.has('preset') && !url.has('reuse')) {
     draft = JSON.parse(sessionStorage.getItem(draftKey)) || draft;
+    if (url.has('model')) {
+      draft.model = modelSelect?.value;
+      if (draft.common) draft.common.model = draft.model;
+    }
   }
 } catch { /* The editor still works with browser storage disabled. */ }
 
@@ -281,6 +286,10 @@ if (editor) {
 
 document.addEventListener('change', (event) => {
   const el = event.target;
+  if (el.id === 'project-filter' && !el.value) {
+    location.assign('/library');
+    return;
+  }
   if (el.hasAttribute('data-autosubmit')) el.form.submit();
   if (el.id === 'load-preset' && el.value) location.assign(`/?preset=${encodeURIComponent(el.value)}`);
   if (['dialect', 'voice-id', 'emotion-voice', 'emotion-mode'].includes(el.id)) refreshModelUi();

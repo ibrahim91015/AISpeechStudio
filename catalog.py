@@ -82,7 +82,8 @@ def defaults(model):
         return dict(values, dialect="eg", voice_id="")
     if model == "index":
         return dict(values, language="en", voice_id="", emo_mode="speaker", emo_voice="", emo_text="",
-                    emo_vector=[0.] * len(EMOTIONS), emo_random=False, do_sample=True, text_normalization=True)
+                    emo_vector=[0.] * len(EMOTIONS), emo_random=False, do_sample=True, text_normalization=True,
+                    glossary="")
     return dict(values, language="English", speaker="Ryan", instruct="", **dict.fromkeys(FLAGS, True))
 
 
@@ -108,7 +109,8 @@ def settings_from(form, model):
         settings.update(language=form.get("language", "en"), voice_id=form.get("voice_id", ""),
                         emo_mode=form.get("emo_mode", "speaker"), emo_voice=form.get("emo_voice", ""),
                         emo_text=form.get("emo_text", "").strip(), emo_random=form.get("emo_random") == "1",
-                        do_sample=form.get("do_sample") == "1", text_normalization=form.get("text_normalization") == "1")
+                        do_sample=form.get("do_sample") == "1", text_normalization=form.get("text_normalization") == "1",
+                        glossary=form.get("glossary", "").strip())
         if settings["language"] not in INDEX_LANGUAGES or settings["emo_mode"] not in {"speaker", "audio", "vector", "text"}:
             raise ValueError("Choose a supported language and emotion mode.")
         try:
@@ -118,6 +120,10 @@ def settings_from(form, model):
         if not all(0 <= value <= 1 for value in vector):
             raise ValueError("Use emotion strengths from 0 to 1.")
         settings["emo_vector"] = vector
+        for line in settings["glossary"].splitlines():
+            term, _, reading = line.partition("=")
+            if line.strip() and (not term.strip() or not reading.strip()):
+                raise ValueError("Write one glossary entry per line as term = spoken form.")
         if settings["emo_mode"] != "audio":
             settings["emo_voice"] = ""
     else:

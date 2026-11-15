@@ -114,12 +114,23 @@ def render(kind, model, data):
             elif options["top_k"] == 0:
                 options["top_k"] = None
             text = data["text"]
-            rate, wav = model.infer(data["reference"], text, None, s["language"],
-                                    emo_audio_prompt=data["emotion"], emo_alpha=s["emo_alpha"], emo_vector=vector,
-                                    use_emo_text=mode == "text", emo_text=s["emo_text"] or None,
-                                    use_random=s["emo_random"], duration_factor=s["duration_factor"],
-                                    text_normalization=s["text_normalization"], interval_silence=s["segment_pause"],
-                                    max_text_tokens_per_segment=s["max_text_tokens"], do_sample=s["do_sample"], **options)
+            normalizer = model.text_process
+            base_glossary = normalizer.term_glossary
+            additions = {}
+            for line in s.get("glossary", "").splitlines():
+                if line.strip():
+                    term, reading = (item.strip() for item in line.split("=", 1))
+                    additions[term] = {"en": reading, "zh": reading}
+            normalizer.term_glossary = {**base_glossary, **additions}
+            try:
+                rate, wav = model.infer(data["reference"], text, None, s["language"],
+                                        emo_audio_prompt=data["emotion"], emo_alpha=s["emo_alpha"], emo_vector=vector,
+                                        use_emo_text=mode == "text", emo_text=s["emo_text"] or None,
+                                        use_random=s["emo_random"], duration_factor=s["duration_factor"],
+                                        text_normalization=s["text_normalization"], interval_silence=s["segment_pause"],
+                                        max_text_tokens_per_segment=s["max_text_tokens"], do_sample=s["do_sample"], **options)
+            finally:
+                normalizer.term_glossary = base_glossary
             wav = wav.astype(np.float32) / 32768
         else:
             wav = model.generate(
