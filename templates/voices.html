@@ -42,7 +42,7 @@
     <div class="panel-head"><div><h2 id="upload-voice-heading">Upload voices</h2><p>Choose one or more clips. Up to 25 MB per file.</p></div></div>
     <div class="add-voice">
       <form class="add-voice" id="voice-upload-form" action="/voices/upload" method="post" enctype="multipart/form-data">
-        <label>Audio files <input id="voice-files" name="reference" type="file" accept="audio/*,.webm,.m4a,.aiff,.aac,.caf,.wma,.wav,.flac,.mp3,.ogg,.opus" multiple required></label>
+        <label>Audio files <input id="voice-files" name="reference" type="file" accept="audio/*,.webm,.m4a,.mka,.mkv,.mp4,.mov,.aiff,.aac,.caf,.wma,.wav,.flac,.mp3,.ogg,.opus" multiple required></label>
         <button class="button primary" type="submit" name="return_view" value="voices">Upload</button>
       </form>
       <form id="name-latest-voice" class="add-form">
@@ -67,7 +67,7 @@
         {% endif %}
         <div class="voice-list reference-clips">
           {% for clip in collection.clips %}
-            <article class="voice-card" id="reference-clip-{{ clip.key }}">
+            <article class="voice-card" id="reference-clip-{{ clip.key }}" tabindex="-1">
               <div class="voice-meta"><h3>{{ clip.name }}</h3><small>{{ clip.language }}{% if clip.duration %} · {{ '%.1f'|format(clip.duration) }} s{% endif %}</small>
                 <small class="voice-transcript-state" data-transcript-asset="{{ clip.transcript_asset }}">{{ transcript_label(clip.transcript_record.kind) }}</small>
               </div>
@@ -75,17 +75,15 @@
               <div class="voice-actions">
                 <a class="quiet" href="/?model={{ collection.studio_model }}&amp;sample_voice={{ clip.key|urlencode }}">Use in Studio</a>
                 <a class="quiet" href="{{ clip.source or collection.source }}" target="_blank" rel="noopener">Source</a>
-                <details class="voice-edit">
-                  <summary class="quiet" aria-label="Rename {{ clip.name }}">Rename</summary>
-                  <form class="add-form" method="post" action="/reference-collections/{{ collection.key }}/rename">
+                <details class="voice-edit reference-manage">
+                  <summary class="quiet" aria-label="Manage {{ clip.name }}">Manage</summary>
+                  <form class="add-form reference-rename" method="post" action="/reference-collections/{{ collection.key }}/rename">
                     <input type="hidden" name="clip_key" value="{{ clip.key }}">
                     <label class="sr-only" for="rename-{{ collection.key }}-{{ loop.index }}">New name for {{ clip.name }}</label>
                     <input id="rename-{{ collection.key }}-{{ loop.index }}" name="name" value="{{ clip.name }}" maxlength="100" required>
                     <button class="button tonal">Save name</button>
                   </form>
-                </details>
-                <details class="voice-edit">
-                  <summary class="quiet" aria-label="Manage {{ clip.name }}">Manage</summary>
+                  <small class="reference-rename-status" aria-live="polite" hidden></small>
                   <button class="quiet" type="button" data-edit-transcript="{{ clip.key }}">Edit Transcript</button>
                 </details>
               </div>

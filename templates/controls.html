@@ -12,9 +12,13 @@
       <label>Language <select name="language">{% for key, language in chatterbox_languages.items() %}<option value="{{ key }}"{% if key == config.language %} selected{% endif %}>{{ language }}</option>{% endfor %}</select></label>
     {% endif %}
     {% include 'reference_controls.html' %}
-    {% if model != 'chatterbox' %}
-      <label>Reference transcript <textarea name="reference_text" rows="3" maxlength="2048" placeholder="The words spoken in the reference clip">{{ config.reference_text }}</textarea></label>
-      <small>Leave blank to use the selected clip’s saved transcript. You can review it in Voices.</small>
+    {% if model in transcript_models %}
+      <div class="reference-transcript-field">
+        <label>Reference transcript
+          <textarea id="reference-transcript" name="reference_text" rows="3" maxlength="2048" dir="auto" data-voice="{{ config.voice_id }}" placeholder="The words spoken in the reference clip">{{ config.reference_text }}</textarea>
+        </label>
+        <a id="edit-reference-transcript" hidden>Edit in Voices tab</a>
+      </div>
     {% endif %}
     {% if model == 'qwen_base' %}
       <label class="check"><input type="checkbox" name="x_vector_only" value="1"{% if config.x_vector_only %} checked{% endif %}>Clone without transcript</label>

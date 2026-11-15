@@ -1,13 +1,18 @@
+{% macro voice_option(key, name, selected, text='', edit_url='', hidden=false) -%}
+  <option value="{{ key }}"{% if selected == key %} selected{% endif %}{% if hidden %} hidden{% endif %}{% if model in transcript_models %} data-transcript="{{ text or '' }}"{% if text and edit_url %} data-transcript-link="{{ edit_url }}"{% endif %}{% endif %}>{% if model in transcript_models %}{% if text %}·{% else %}&#8200;{% endif %}&nbsp;{% endif %}{{ name }}</option>
+{%- endmacro %}
 {% macro options(selected) -%}
-  {% if voices %}<optgroup label="Uploaded voices">{% for voice in voices %}<option value="{{ voice.id }}"{% if selected == voice.id %} selected{% endif %}>{{ voice.name }}</option>{% endfor %}</optgroup>{% endif %}
+  {% if voices %}<optgroup label="Uploaded voices">{% for voice in voices %}{{ voice_option(voice.id, voice.name, selected, voice.transcript) }}{% endfor %}</optgroup>{% endif %}
   {% for collection in reference_collections %}
     {% if collection.visible %}
       <optgroup label="{{ collection.dropdown_label }}">
-        {% for clip in collection.clips %}<option value="{{ clip.key }}"{% if selected == clip.key %} selected{% endif %}>{{ clip.name }}</option>{% endfor %}
+        {% for clip in collection.clips %}
+          {{ voice_option(clip.key, clip.name, selected, clip.transcript_record.get('text'), '/voices?group=' ~ collection.key ~ '#reference-clip-' ~ (clip.key|urlencode)) }}
+        {% endfor %}
       </optgroup>
     {% elif selected %}
       {% for clip in collection.clips if clip.key == selected %}
-        <option value="{{ clip.key }}" selected hidden>{{ clip.name }}</option>
+        {{ voice_option(clip.key, clip.name, selected, clip.transcript_record.get('text'), '/voices?group=' ~ collection.key ~ '#reference-clip-' ~ (clip.key|urlencode), hidden=true) }}
       {% endfor %}
     {% endif %}
   {% endfor %}
@@ -15,13 +20,14 @@
 <label>Reference voice
   <select name="voice_id" id="voice-id">
     <option value="">{{ 'Dialect reference' if model == 'lahgtna' else ('Use default voice' if model in higgs_models or model == 'chatterbox' else 'Choose a voice') }}</option>
-    {% if previous_voice %}<option value="{{ previous_voice }}"{% if previous_voice == config.voice_id %} selected{% endif %}>Previous recording’s reference</option>{% endif %}
+    {% if previous_voice %}{{ voice_option(previous_voice, 'Previous recording’s reference', config.voice_id, previous_transcript) }}{% endif %}
     {{ options(config.voice_id) }}
   </select>
+  {% if model in transcript_models %}<small>A dot marks voices with a transcript.</small>{% endif %}
 </label>
 <audio id="reference-preview" controls preload="none" aria-label="Preview selected reference" hidden></audio>
 <div class="file-actions">
-  <label class="button tonal import-label"><input class="sr-only" id="reference" name="reference" form="studio-voice-upload" type="file" accept="audio/*,.webm,.m4a,.caf,.wma" aria-label="Choose reference audio" required>Choose audio</label>
+  <label class="button tonal import-label"><input class="sr-only" id="reference" name="reference" form="studio-voice-upload" type="file" accept="audio/*,.webm,.m4a,.mka,.mkv,.mp4,.mov,.caf,.wma" aria-label="Choose reference audio" required>Choose audio</label>
   <button class="button outlined" type="submit" form="studio-voice-upload" name="return_view" value="{{ model }}">Upload</button>
   <button class="button outlined" id="record-reference" type="button">Record</button>
 </div>

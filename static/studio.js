@@ -27,7 +27,7 @@ try {
 
 function draftControls(container) {
   return [...container.querySelectorAll('input[name], select[name], textarea[name], details')]
-    .filter(el => (container !== studioForm || !studioFields.contains(el)) && !['file', 'submit'].includes(el.type));
+    .filter(el => (container !== studioForm || !studioFields.contains(el)) && !['file', 'submit'].includes(el.type) && el.id !== 'reference-transcript');
 }
 
 function values(container) {
@@ -177,6 +177,35 @@ function previewReference() {
   }
 }
 
+function transcriptValues() {
+  const model = studioFields.firstElementChild.dataset.model;
+  draft.transcripts ??= {};
+  return draft.transcripts[model] ??= {};
+}
+
+function refreshReferenceTranscript() {
+  const field = studioFields.querySelector('#reference-transcript');
+  if (!field) return;
+  const select = studioFields.querySelector('#voice-id');
+  const option = select.selectedOptions[0];
+  const link = studioFields.querySelector('#edit-reference-transcript');
+  const editUrl = option?.dataset.transcriptLink;
+  const saved = option?.dataset.transcript || '';
+  const texts = transcriptValues();
+
+  if (field.dataset.voice === select.value && !field.readOnly && field.value && !Object.hasOwn(texts, select.value)) {
+    texts[select.value] = field.value;
+  }
+  field.dataset.voice = select.value;
+  field.readOnly = Boolean(editUrl);
+  field.name = editUrl ? '' : 'reference_text';
+  field.rows = editUrl ? 2 : 3;
+  field.value = editUrl ? saved : (Object.hasOwn(texts, select.value) ? texts[select.value] : saved);
+  link.hidden = !editUrl;
+  if (editUrl) link.href = editUrl;
+  else link.removeAttribute('href');
+}
+
 function refreshModelUi() {
   const isArabic = studioFields.firstElementChild.dataset.model === 'lahgtna';
   document.querySelector('#arabic-tools').hidden = !isArabic;
@@ -185,6 +214,7 @@ function refreshModelUi() {
   const mode = document.querySelector('#emotion-mode');
   if (mode) studioFields.querySelectorAll('[data-emotion]').forEach(el => { el.hidden = el.dataset.emotion !== mode.value; });
   previewReference();
+  refreshReferenceTranscript();
 }
 
 function uploadVoice(file, progress, callback) {
@@ -203,10 +233,20 @@ function addVoice(option, chosen) {
       group.label = 'Uploaded voices';
       select.options[0].after(group);
     }
-    group.append(new Option(option.name, option.id, false, select.id === chosen));
+    const item = new Option(option.name, option.id);
+    if (select.id === 'voice-id' && studioFields.querySelector('#reference-transcript')) {
+      const transcript = option.transcript || '';
+      item.textContent = (transcript ? '·\u00a0' : '\u2008\u00a0') + option.name;
+      item.dataset.transcript = transcript;
+      if (chosen === select.id && !select.value && !transcript) {
+        const pending = transcriptValues()[''];
+        if (pending) transcriptValues()[option.id] = pending;
+      }
+    }
+    group.append(item);
     if (select.id === chosen) select.value = option.id;
   });
-  previewReference();
+  refreshModelUi();
 }
 
 function uploadStudioReference(input) {
@@ -284,10 +324,8 @@ if (editor) {
   if (incomingVoice && option) option.selected = true;
   if (studioForm.dataset.sampleVoice && option) {
     const language = studioFields.querySelector('[name=language]');
-    const transcript = studioFields.querySelector('[name=reference_text]');
     const embeddingOnly = studioFields.querySelector('[name=x_vector_only]');
     if (language && studioForm.dataset.sampleLanguage) language.value = studioForm.dataset.sampleLanguage;
-    if (transcript) transcript.value = '';
     if (embeddingOnly) embeddingOnly.checked = studioForm.dataset.sampleEmbeddingOnly === '1';
   }
   const uploadedEmotion = document.querySelector('#emotion-voice option[value="' + CSS.escape(studioForm.dataset.uploadedEmotion) + '"]');
@@ -301,10 +339,32 @@ if (editor) {
   }
   refreshCount();
   refreshModelUi();
-  studioForm.addEventListener('input', scheduleSave);
+  studioForm.addEventListener('input', event => {
+    if (event.target.id === 'reference-transcript' && !event.target.readOnly) {
+      transcriptValues()[event.target.dataset.voice] = event.target.value;
+    }
+    scheduleSave();
+  });
   studioForm.addEventListener('change', scheduleSave);
   studioForm.addEventListener('toggle', scheduleSave, true);
   window.addEventListener('pagehide', rememberDraft);
+  window.addEventListener('pageshow', async event => {
+    if (!event.persisted || !studioFields.querySelector('#reference-transcript')) return;
+    const select = studioFields.querySelector('#voice-id');
+    const option = select.selectedOptions[0];
+    if (!option?.dataset.transcriptLink) return;
+    try {
+      const response = await fetch('/voices/transcript?' + new URLSearchParams({voice: option.value}));
+      if (!response.ok) return;
+      const {text} = await response.json();
+      option.dataset.transcript = text || '';
+      if (!text) {
+        option.textContent = '\u2008\u00a0' + option.textContent.slice(2);
+        delete option.dataset.transcriptLink;
+      }
+      if (option.isConnected && select.value === option.value) refreshReferenceTranscript();
+    } catch { /* Retain the displayed transcript if the server cannot be reached. */ }
+  });
   editor.addEventListener('input', refreshCount);
   editor.addEventListener('dragover', (event) => {
     if (!event.dataTransfer.types.includes('Files')) return;
@@ -347,7 +407,57 @@ document.addEventListener('change', (event) => {
 });
 
 
-document.querySelector('.reference-collections')?.addEventListener('submit', async event => {
+const referenceCollections = document.querySelector('.reference-collections');
+referenceCollections?.addEventListener('click', event => {
+  const summary = event.target.closest('.reference-manage > summary');
+  if (!summary) return;
+  const card = summary.closest('.voice-card');
+  const top = card.getBoundingClientRect().top;
+  const open = !summary.parentElement.open;
+  const row = [...card.parentElement.children].filter(item => Math.abs(item.getBoundingClientRect().top - top) < 1);
+  event.preventDefault();
+  for (const item of row) item.querySelector('.reference-manage').open = open;
+});
+
+referenceCollections?.addEventListener('submit', async event => {
+  const form = event.target;
+  if (!form.matches('.reference-rename')) return;
+  event.preventDefault();
+  const button = form.querySelector('button');
+  if (button.disabled) return;
+  const card = form.closest('.voice-card');
+  const status = card.querySelector('.reference-rename-status');
+  const input = form.elements.namedItem('name');
+  const submitted = input.value;
+  button.disabled = true;
+  status.hidden = false;
+  status.className = 'reference-rename-status';
+  status.textContent = 'Saving name…';
+  try {
+    const response = await fetch(form.action, {
+      method: 'POST',
+      headers: {Accept: 'application/json'},
+      body: new URLSearchParams(new FormData(form)),
+    });
+    const result = await response.json();
+    if (!response.ok || typeof result.name !== 'string') {
+      throw new Error(typeof result.detail === 'string' ? result.detail : 'Could not save the name. Try again.');
+    }
+    if (input.value === submitted) input.value = result.name;
+    card.querySelector('h3').textContent = result.name;
+    form.querySelector('label').textContent = 'New name for ' + result.name;
+    card.querySelector('.reference-manage > summary').setAttribute('aria-label', 'Manage ' + result.name);
+    card.querySelector('audio').setAttribute('aria-label', 'Play ' + result.name);
+    status.textContent = 'Name saved.';
+  } catch (error) {
+    status.classList.add('notice-error');
+    status.textContent = error instanceof SyntaxError ? 'Could not save the name. Try again.' : error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+referenceCollections?.addEventListener('submit', async event => {
   const form = event.target;
   if (!form.matches('.reference-visibility')) return;
   event.preventDefault();

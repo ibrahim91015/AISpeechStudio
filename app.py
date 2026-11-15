@@ -20,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
 from catalog import ARABIC_SAMPLES, DIALECTS, EMOTIONS, FLAGS, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, REFERENCE_VOICES, SPEAKERS, TASHKIL, controls, defaults, settings_from
-from catalog import CHATTERBOX_LANGUAGES, HIGGS_MODELS, REFERENCE_MODELS, REQUIRED_REFERENCE
+from catalog import CHATTERBOX_LANGUAGES, HIGGS_MODELS, REFERENCE_MODELS, REQUIRED_REFERENCE, TRANSCRIPT_MODELS
 from demo_voices import CLIPS, COLLECTION_CLIPS, edited_transcript, reference_filename, transcript_record, voice_collections
 from documents import IMPORT_EXTENSIONS, MAX_TEXT, import_document
 from queue_worker import Worker
@@ -81,6 +81,7 @@ templates.env.globals.update(models=MODELS, dialects=DIALECTS, languages=QWEN_LA
                              emotions=EMOTIONS, arabic_samples=ARABIC_SAMPLES,
                              import_extensions=",".join(IMPORT_EXTENSIONS), max_text=MAX_TEXT,
                              studio_js_version=studio_js_version, studio_css_version=studio_css_version,
+                             transcript_models=TRANSCRIPT_MODELS,
                              notifications_js_version=notifications_js_version)
 
 
@@ -233,6 +234,7 @@ def studio(request: Request, model: str = "qwen", preset: int | None = None, reu
         config.update(emo_mode="audio", emo_voice=uploaded_emotion)
     return render(request, "studio.html", page="studio", model=model, config=config, reused=previous, previous_voice=previous_voice,
                   text=previous["script"] if previous else "", sample_voice=sample_voice,
+                  previous_transcript=saved_transcript(uid, previous_voice).get("text", "") if model in TRANSCRIPT_MODELS else "",
                   jobs=history(uid, limit=8), state=health_data(), reference_collections=voice_collections(), **lookups(uid))
 
 
@@ -243,6 +245,7 @@ def model_controls(request: Request, model: str = "qwen", reused: str = ""):
     uid = current_user(request)["id"]
     previous_voice = f"previous:{reused}" if reused and reference_file(uid, f"previous:{reused}") else ""
     response = render(request, "controls.html", model=model, config=defaults(model), previous_voice=previous_voice,
+                      previous_transcript=saved_transcript(uid, previous_voice).get("text", "") if model in TRANSCRIPT_MODELS else "",
                       reference_collections=voice_collections(), **lookups(uid))
     response.headers["Cache-Control"] = "private, no-store"
     return response
@@ -439,6 +442,8 @@ async def rename_reference_clip(request: Request, group: str):
         with connect() as db:
             db.execute("INSERT INTO reference_clip_names(clip_key,name) VALUES (?,?) "
                        "ON CONFLICT(clip_key) DO UPDATE SET name=excluded.name", (key, name))
+    if "application/json" in request.headers.get("accept", ""):
+        return {"name": name}
     return reference_collection_redirect(group, key)
 
 
@@ -512,7 +517,7 @@ async def upload_voice(request: Request):
     except ClientDisconnect as exc:
         raise HTTPException(400, "The upload connection closed before the file arrived.") from exc
     if not native:
-        return one("SELECT id,name FROM voices WHERE id=? AND user_id=?", (saved[0], uid))
+        return one("SELECT id,name,transcript FROM voices WHERE id=? AND user_id=?", (saved[0], uid))
     if view == "voices":
         return RedirectResponse(f"/voices?uploaded={len(saved)}&skipped={len(errors)}", 303)
     model = "index" if view == "index-emotion" else view
@@ -656,9 +661,15 @@ async def create_job(request: Request):
                 saved_voice = one("SELECT id,name FROM voices WHERE id=?", (selected_voice,))
             if model in REQUIRED_REFERENCE and not selected_voice:
                 raise ValueError(f"Choose or upload a reference voice for {MODELS[model]}.")
-            if model in HIGGS_MODELS or model == "qwen_base":
-                record = saved_transcript(uid, selected_voice) if not config["reference_text"] else {}
-                auto_text = record.get("first_30s", record.get("text", "")) if model in HIGGS_MODELS else record.get("text", "")
+            if model in TRANSCRIPT_MODELS:
+                record = saved_transcript(uid, selected_voice)
+                if record.get("text") and reference_filename(selected_voice):
+                    config["reference_text"] = ""
+                auto_text = record.get("text", "")
+                if model in HIGGS_MODELS:
+                    auto_text = record.get("first_30s", auto_text)
+                if config["reference_text"]:
+                    auto_text = ""
                 if model == "qwen_base" and not config["x_vector_only"] and not (config["reference_text"] or auto_text):
                     raise ValueError("Enter the reference transcript or enable Clone without transcript.")
                 if model in HIGGS_MODELS and not selected_voice and config["reference_text"]:

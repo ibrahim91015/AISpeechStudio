@@ -11,6 +11,7 @@ MODELS = {
     "index": "IndexTTS 2.5",
 }
 HIGGS_MODELS = {"higgs_bf16", "higgs_q8"}
+TRANSCRIPT_MODELS = HIGGS_MODELS | {"qwen_base"}
 REFERENCE_MODELS = set(MODELS) - {"qwen"}
 REQUIRED_REFERENCE = {"index", "qwen_base"}
 REFERENCE_TRANSCRIPTS = {
