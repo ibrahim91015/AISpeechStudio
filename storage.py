@@ -67,6 +67,11 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status, created);
 CREATE INDEX IF NOT EXISTS user_history ON jobs(user_id, created DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS one_running_job ON jobs(status) WHERE status='running';
+CREATE TABLE IF NOT EXISTS job_submissions (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    request_key TEXT NOT NULL, fingerprint TEXT NOT NULL, runs INTEGER NOT NULL,
+    created TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(user_id, request_key)
+);
 CREATE TABLE IF NOT EXISTS worker_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton=1), model TEXT, last_seen REAL NOT NULL
 );

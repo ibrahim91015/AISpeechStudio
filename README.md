@@ -42,4 +42,10 @@ Drop documents into the script editor or use **Import text**. Each upload can be
 
 Voice uploads begin on selection. A tab-local draft preserves text and per-model settings until the page is manually reloaded. Library MP3 share copies expire after one day, with hourly file cleanup.
 
+Large scripts and ebook selections use IndexedDB, with a sessionStorage fallback and a visible warning if browser storage fails. An import only replaces the script after successful extraction. EPUB/MOBI chapter, section and page offsets are carried into batch titles; manually edited scripts discard their outdated offset map. The browser and server use matching run-splitting rules, including Arabic combining marks and expression tags.
+
+Document uploads are capped before multipart parsing. Browser imports return a receipt and poll for completion, so parsing does not hold one HTTP request open through a proxy. A single subprocess parses documents with a 90-second wall limit, 80-second CPU limit, 1 GiB address-space limit, bounded output and low-disk checks. Up to three further imports may wait. Sources are deleted after parsing; receipts expire after 30 minutes and are swept on access, hourly, and at restart. A service restart invalidates an unfinished import and the client explains how to retry. This importer is separate from the single GPU inference queue.
+
+Generation submissions carry an idempotency receipt to prevent duplicated batches when an HTTP response is lost. Receipts are retained for seven days. Small requests from another page/device/profile can move ahead of pending bulk runs, but never interrupt active inference. Reference audio and settings are snapshotted per run. PCM checkpoints, atomic final export, disk guards, cancellation and adaptive token-limit retry are covered by the [regression tests](tests/README.md).
+
 For a reverse proxy that rewrites the upstream Host header, set `TTS_TRUSTED_ORIGINS` to the comma-separated public origins, including the HTTPS scheme. Visitors can click **Upload** to retry a selected voice file or submit it with JavaScript disabled.

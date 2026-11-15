@@ -121,6 +121,14 @@ class Worker:
         self.stop_event.set()
         self.thread.join(timeout=12)
 
+    def try_unload(self):
+        try:
+            self.unload()
+            return True
+        except Exception:
+            log.exception("TTS unload failed; queue remains paused until the process exits")
+            return False
+
     def publish(self):
         self.last_publish = time.monotonic()
         with connect() as db:
@@ -349,13 +357,19 @@ class Worker:
                 db.execute("UPDATE jobs SET status='cancelled', phase='Cancelled' WHERE status='running' AND cancel=1")
                 db.execute("UPDATE jobs SET status='queued', phase='Waiting to resume', queue_priority=2 WHERE status='running'")
             last_used = time.monotonic()
+            unloading = False
             try:
                 while not self.stop_event.is_set():
                     self.publish()
+                    if unloading:
+                        unloading = not self.try_unload()
+                        if unloading:
+                            self.stop_event.wait(2)
+                            continue
                     job = claim()
                     if job is None:
                         if self.process is not None and time.monotonic() - last_used >= IDLE_SECONDS:
-                            self.unload()
+                            unloading = not self.try_unload()
                         self.stop_event.wait(.7)
                         continue
                     key = job["id"]
@@ -366,11 +380,11 @@ class Worker:
                         paused = True
                         update(key, status="queued", phase="Waiting to resume", queue_priority=2)
                     except Cancelled:
-                        self.unload()
+                        unloading = not self.try_unload()
                         update(key, status="cancelled", phase="Cancelled")
                     except Exception as exc:
                         log.exception("Synthesis failed for %s", key)
-                        self.unload()
+                        unloading = not self.try_unload()
                         update(key, status="failed", phase="Failed", error=str(exc)[:700])
                     finally:
                         folder = JOBS / key
@@ -378,7 +392,10 @@ class Worker:
                         if not paused:
                             scratch_files.extend(("assembly.pcm", "assembly.json", "assembly.tmp"))
                         for scratch in scratch_files:
-                            (folder / scratch).unlink(missing_ok=True)
+                            try:
+                                (folder / scratch).unlink(missing_ok=True)
+                            except OSError:
+                                log.exception("Could not clean scratch file %s for %s", scratch, key)
                         last_used = time.monotonic()
             finally:
                 self.unload()

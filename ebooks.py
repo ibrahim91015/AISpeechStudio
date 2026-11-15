@@ -4,6 +4,8 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
+from bisect import bisect_right
+from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -26,7 +28,9 @@ STORY_LABEL = re.compile(r"^(?:prelude\b|prologue\b|chapter\b|part\b|\d+(?:[.:\s
 SECTION_LABEL = re.compile(r"^(?:part\b|book\s+(?:one|two|three|four|five|[ivxlcdm\d]+)\b|"
                            r"appendix\b|glossary\b|ars arcanum\b|endnote\b)", re.I)
 METADATA_LABEL = re.compile(r"^(?:table of contents|contents|copyright|title page|dedication|"
+                            r"preface and acknowledg(?:e)?ments?|illustrations|list of (?:illustrations|figures|maps)|"
                             r"acknowledg(?:e)?ments?|about the author|also by)(?:\W|$)", re.I)
+ILLUSTRATION_LABEL = re.compile(r"^(?:(?:prime )?map(?: of|$)|(?:detail|diagram|sketch|illustration) of\b)", re.I)
 END_LABEL = re.compile(r"^(?:about the author|also by|copyright|contents|table of contents)\b|"
                        r"\bBOOK TWO OF\b", re.I)
 BY_AUTHOR = re.compile(r"^By (?:[^\W\d_]+ +){1,3}[^\W\d_]+$", re.I)
@@ -48,6 +52,8 @@ class BookHTML(HTMLParser):
         self.headings = []
         self.heading = None
         self.link = None
+        self.quote_start = None
+        self.quoted_length = 0
 
     def handle_starttag(self, tag, attributes):
         attrs = dict(attributes)
@@ -66,7 +72,8 @@ class BookHTML(HTMLParser):
                 if anchor:
                     self.anchors.setdefault(anchor, self.length)
             hidden = (page or tag in HIDDEN or bool(semantics & METADATA_TYPES) or
-                      "hidden" in attrs or attrs.get("aria-hidden") == "true")
+                      "hidden" in attrs or attrs.get("aria-hidden") == "true" or
+                      bool(re.search(r"(?:display\s*:\s*none|visibility\s*:\s*hidden)", attrs.get("style") or "", re.I)))
             if not hidden:
                 if tag in BLOCKS:
                     self.gap = "\n\n"
@@ -78,6 +85,8 @@ class BookHTML(HTMLParser):
                     self.heading = (tag, self.length, len(self.chunks))
                 if tag == "a" and attrs.get("href"):
                     self.link = (self.length, len(self.chunks), attrs["href"])
+                if tag == "blockquote" and self.quote_start is None:
+                    self.quote_start = self.length
         if tag not in VOID:
             self.stack.append((tag, hidden))
 
@@ -113,6 +122,8 @@ class BookHTML(HTMLParser):
         data = re.sub(r"\s+", " ", data)
         value = data.strip()
         if value:
+            if any(tag == "blockquote" for tag, _ in self.stack):
+                self.quoted_length += len(value)
             if not self.gap and data[0] == " ":
                 self.gap = " "
             chunk = (self.gap if self.chunks else "") + value
@@ -217,13 +228,85 @@ def approximate_pages(text, start, end):
     return marks
 
 
+def omit_spans(text, groups, removed, preserve_marks=False):
+    ends, prefix = [], [0]
+    pieces, previous = [], 0
+    for lo, hi in removed:
+        pieces.append(text[previous:lo])
+        previous = hi
+        ends.append(hi)
+        prefix.append(prefix[-1] + hi - lo)
+    def remap(marks):
+        result = []
+        for offset, label in marks:
+            index = bisect_right(ends, offset)
+            inside = index < len(removed) and removed[index][0] <= offset
+            if inside and not (preserve_marks or SECTION_LABEL.match(label)):
+                continue
+            partial = offset - removed[index][0] if inside else 0
+            result.append((offset - prefix[index] - partial, label))
+        return result
+    return "".join(pieces) + text[previous:], [remap(marks) for marks in groups]
+
+
 def section_ranges(text, chapters, headings, pages, files):
-    chapters = sorted(chapters or headings or files, key=lambda mark: mark[0])
+    source_marks = sorted(chapters or headings or files, key=lambda mark: mark[0])
+    # The copyright page may have no spoken text, leaving its anchor just beyond
+    # the last text block. Still use it to recognize a preceding bibliography.
+    for index, (offset, label) in enumerate(source_marks[:-1]):
+        if BY_AUTHOR.match(label) and offset > len(text) * .8 and source_marks[index + 1][1].lower().startswith("copyright"):
+            text = text[:offset]
+            break
+    chapters = [(offset, label) for offset, label in source_marks if 0 <= offset < len(text)]
     if not chapters:
         chapters = [(0, "Entire book")]
+    first_story = next((offset for offset, label in chapters if STORY_LABEL.match(label)), 0)
+    possible_titles = {label for offset, label in chapters if offset < first_story and not METADATA_LABEL.match(label)}
+    repeated = []
+    for offset, label in chapters:
+        if not STORY_LABEL.match(label):
+            continue
+        match = re.match(r"\s*([^\n]+)\n\s*", text[offset:offset + 400])
+        if match and match[1] in possible_titles:
+            repeated.append((offset, offset + match.end(), match[1]))
+    counts = Counter(label for _, _, label in repeated)
+    title_spans = [(lo, hi) for lo, hi, label in repeated if counts[label] >= 3]
+    if title_spans:
+        text, (chapters, headings, pages, files) = omit_spans(text, (chapters, headings, pages, files), title_spans, True)
+    # Remove the actual text spans too, not just their labels in the picker.
+    labels_at = {}
+    for offset, label in chapters:
+        labels_at.setdefault(offset, []).append(label)
+    if len(labels_at) > 10_000:
+        raise ValueError("This ebook has more than 10,000 navigation entries. Split it before importing.")
+    offsets = sorted(set(labels_at) | {len(text)})
+    removed = []
+    first_story = next((offset for offset, label in chapters if STORY_LABEL.match(label)), len(text))
+    for offset, stop in zip(offsets, offsets[1:]):
+        labels = labels_at[offset]
+        image_divider = (stop - offset < 1000 and any(ILLUSTRATION_LABEL.match(label) for label in labels)
+                         and all(ILLUSTRATION_LABEL.match(label) or SECTION_LABEL.match(label) for label in labels))
+        if image_divider or (labels and all(METADATA_LABEL.match(label) for label in labels)):
+            if offset > first_story and any(END_LABEL.search(label) for label in labels):
+                removed.append((offset, len(text)))
+                break
+            removed.append((offset, stop))
+    if removed:
+        text, (chapters, headings, pages, files) = omit_spans(text, (chapters, headings, pages, files), removed)
+        if not chapters:
+            chapters = [(0, "Entire book")]
     display_marks = [(offset, label) for offset, label in chapters if not METADATA_LABEL.match(label)]
+    # Do not discard a named introduction or Arabic opening merely because a later
+    # heading happens to match the English word "Chapter".
+    start = display_marks[0][0] if display_marks else 0
     first_story = next((offset for offset, label in display_marks if STORY_LABEL.match(label)), None)
-    start = first_story if first_story is not None else display_marks[0][0] if display_marks else 0
+    if first_story is not None and first_story > start:
+        opening = text[start:first_story]
+        introduction = any(re.match(r"^(?:introduction|preface|foreword|مقدمة)\b", label, re.I)
+                           for offset, label in display_marks if offset < first_story)
+        front_matter = re.search(r"(?im)^(?:by [^\n]{2,80}|a tom doherty|published by|copyright|ISBN)\b", opening)
+        if not introduction and front_matter:
+            start = first_story
     end = len(text)
     for index, (offset, label) in enumerate(chapters):
         if offset <= start:
@@ -242,6 +325,16 @@ def section_ranges(text, chapters, headings, pages, files):
     copyright_notice = TAIL_COPYRIGHT.search(text, max(last_chapter, end - 12_000), end)
     if copyright_notice and re.search(r"\bISBN\b|all rights reserved", text[copyright_notice.start():end], re.I):
         end = copyright_notice.start()
+    fiction_notice = re.search(r"(?:^|\n\n)This is a work of fiction\.", text[max(last_chapter, end - 2000):end])
+    if fiction_notice:
+        end = max(last_chapter, end - 2000) + fiction_notice.start()
+    preview = re.search(r"(?:^|\n\n)(?:Turn the page for a sneak peek|Read on for an? (?:excerpt|preview)|An? (?:excerpt|preview) from)\b",
+                        text[last_chapter:end], re.I)
+    if preview:
+        end = last_chapter + preview.start()
+    proof = re.search(r"(?:^|\n\n)v\d[\d.]*\s+proof(?:ed|read) by\b", text[max(last_chapter, end - 500):end], re.I)
+    if proof:
+        end = max(last_chapter, end - 500) + proof.start()
     book = text[start:end]
     if not book.strip():
         raise ValueError("No readable text found in the ebook’s reading order.")
@@ -294,6 +387,8 @@ def section_ranges(text, chapters, headings, pages, files):
 
 def epub_content(data, decode, limit, max_text):
     with zipfile.ZipFile(data) as archive:
+        if len(archive.infolist()) > 20_000:
+            raise ValueError("This ebook contains too many files to import.")
         container = fromstring(archive_member(archive, "META-INF/container.xml", limit))
         package_path = container.find(".//{*}rootfile").attrib["full-path"]
         package = fromstring(archive_member(archive, package_path, limit))
@@ -307,6 +402,7 @@ def epub_content(data, decode, limit, max_text):
                   for ref in package.findall("./{*}guide/{*}reference")
                   if ref.get("type") in METADATA_TYPES and ref.get("href")}
         locations, headings, pages, files, blocks, links = {}, [], [], [], [], []
+        reading_order = []
         position = archive_size = characters = 0
         for ref in spine.findall("./{*}itemref"):
             item = manifest.get(ref.get("idref"))
@@ -337,19 +433,36 @@ def epub_content(data, decode, limit, max_text):
             pages.extend((position + offset, label) for offset, label in parser.pages)
             if text:
                 files.append((position, f"Section {len(files) + 1}"))
+                epigraph = (position + parser.quote_start if parser.quote_start is not None and
+                            len(text) < 8000 and parser.quoted_length > len(text) * .6 else None)
+                reading_order.append((path, position, epigraph))
                 position += len(text) + 2
                 characters += len(text.encode("utf-16-le")) // 2 + 2
                 if characters > max_text + 2:
                     raise ValueError("The ebook exceeds 5 million characters. Split it before importing.")
                 blocks.append(text)
         chapters = [(locations[link], label) for link, label in toc if link in locations]
+        # Calibre/legacy books may store the epigraph in an unlisted spine item
+        # immediately before the chapter's navigation target.
+        navigated = {link[0] for link, _ in toc}
+        preceding_quotes = {position: reading_order[index - 1][2]
+                            for index, (path, position, _) in enumerate(reading_order) if index and
+                            path in navigated and reading_order[index - 1][0] not in navigated and
+                            reading_order[index - 1][2] is not None}
+        chapters = [(preceding_quotes.get(offset, offset), label) for offset, label in chapters]
         if not chapters:
             chapters = linked_contents(links, locations)
         for link, label in page_list:
             if link in locations:
                 pages.insert(0, (locations[link], label))
     result = section_ranges("\n\n".join(blocks), chapters, headings, pages, files)
-    result["title"] = (package.findtext("./{*}metadata/{*}title") or "").strip()[:100]
+    if any(ord(char) < 32 and char not in "\n\t\f" for char in result["text"]):
+        raise ValueError("The ebook contains invalid text characters.")
+    title = (package.findtext("./{*}metadata/{*}title") or "").strip()[:100]
+    if re.fullmatch(r"[\d_ -]{8,}(?:\.(?:pdf|mobi|epub))?", title, re.I):
+        title = next((label for _, label in chapters[:1]
+                      if not (STORY_LABEL.match(label) or METADATA_LABEL.match(label))), "")[:100]
+    result["title"] = title
     return result
 
 

@@ -14,6 +14,8 @@
   {% endif %}
   <link rel="stylesheet" href="/static/studio.css?v={{ studio_css_version }}">
   <script defer src="/static/htmx.min.js"></script>
+  <script defer src="/static/draft-storage.js?v={{ studio_js_version }}"></script>
+  <script defer src="/static/run-splitting.js?v={{ studio_js_version }}"></script>
   <script defer src="/static/studio.js?v={{ studio_js_version }}"></script>
   <script defer src="/static/notifications.js?v={{ notifications_js_version }}"></script>
   {% if page == 'library' %}<script defer src="/static/library.js"></script>{% endif %}

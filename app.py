@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import time
@@ -18,12 +19,14 @@ from fastapi.templating import Jinja2Templates
 from starlette.datastructures import UploadFile
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
+from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 
 from catalog import ARABIC_SAMPLES, DIALECTS, EMOTIONS, FLAGS, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, REFERENCE_VOICES, SPEAKERS, TASHKIL, controls, defaults, settings_from
 from catalog import CHATTERBOX_LANGUAGES, HIGGS_MODELS, REFERENCE_MODELS, REQUIRED_REFERENCE, TRANSCRIPT_MODELS
 from demo_voices import CLIPS, COLLECTION_CLIPS, edited_transcript, reference_filename, transcript_record, voice_collections
 from documents import IMPORT_EXTENSIONS, MAX_BYTES, MAX_IMPORT_TEXT, import_document
 from generation_limits import RUN_CHAR_LIMIT, split_runs
+from import_tasks import ImportTasks
 from queue_worker import Worker
 from notification_events import device_id, enqueue, speech_event
 from push_delivery import Endpoint, PushDelivery, Subscription, valid_endpoint, valid_key
@@ -36,6 +39,7 @@ from voice_media import store_voice
 @asynccontextmanager
 async def lifespan(app):
     setup()
+    app.state.imports = ImportTasks()
     app.state.push_delivery = PushDelivery()
     worker = Worker()
     worker.start()
@@ -44,6 +48,7 @@ async def lifespan(app):
     async def clear_shares():
         while True:
             await run_in_threadpool(shares.cleanup)
+            await run_in_threadpool(app.state.imports.sweep)
             await asyncio.sleep(3600)
 
     async def deliver_push():
@@ -65,15 +70,30 @@ async def lifespan(app):
         await asyncio.gather(cleanup, delivery, return_exceptions=True)
         await run_in_threadpool(app.state.share_worker.shutdown, wait=False, cancel_futures=True)
         await run_in_threadpool(worker.close)
+        await run_in_threadpool(app.state.imports.close)
 
 
 app = FastAPI(title="AI Speech Studio", lifespan=lifespan)
+
+
+class DocumentBodyLimit:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        limit = {"/import-text": MAX_BYTES + 1024 ** 2, "/jobs": 76 * 1024 ** 2}.get(scope.get("path"))
+        target = RequestBodyLimitMiddleware(self.app, limit) if limit and scope.get("method") == "POST" else self.app
+        await target(scope, receive, send)
+
+
+app.add_middleware(DocumentBodyLimit)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 templates = Jinja2Templates(directory=ROOT / "templates")
 system_stats = Stats()
 notifications_js_version = hashlib.sha256((ROOT / "static/notifications.js").read_bytes()).hexdigest()[:12]
 studio_css_version = hashlib.sha256((ROOT / "static/studio.css").read_bytes()).hexdigest()[:12]
-studio_js_version = hashlib.sha256((ROOT / "static/studio.js").read_bytes()).hexdigest()[:12]
+studio_js_version = hashlib.sha256(b"".join((ROOT / "static" / name).read_bytes()
+                                          for name in ("studio.js", "draft-storage.js", "run-splitting.js"))).hexdigest()[:12]
 trusted_origins = {origin.strip().rstrip("/").lower()
                    for origin in os.getenv("TTS_TRUSTED_ORIGINS", "").split(",") if origin.strip()}
 templates.env.globals.update(models=MODELS, dialects=DIALECTS, languages=QWEN_LANGUAGES, speakers=SPEAKERS,
@@ -476,10 +496,25 @@ async def extract_text(request: Request):
         if not isinstance(upload, UploadFile) or not upload.filename:
             raise HTTPException(400, "Choose a text or document file.")
         try:
-            result = await run_in_threadpool(import_document, upload)
+            key = await run_in_threadpool(request.app.state.imports.submit, upload, current_user(request)["id"])
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+        except (OSError, RuntimeError) as exc:
+            logging.getLogger(__name__).exception("Could not start document import")
+            raise HTTPException(503, "The document importer is unavailable or out of storage. Wait a moment and retry.") from exc
+    if request.headers.get("x-import-async") == "1":
+        return JSONResponse({"import_id": key}, status_code=202, headers={"Cache-Control": "no-store"})
+    while True:
+        result, status = await run_in_threadpool(request.app.state.imports.result, key, current_user(request)["id"])
+        if status != 202:
+            return JSONResponse(result, status_code=status, headers={"Cache-Control": "no-store"})
+        await asyncio.sleep(.2)
+
+
+@app.get("/imports/{key}")
+async def import_result(request: Request, key: str):
+    result, status = await run_in_threadpool(request.app.state.imports.result, key, current_user(request)["id"])
+    return JSONResponse(result, status_code=status, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/references/{dialect}")
@@ -632,19 +667,28 @@ def notify_voice(response, voice, queue=False):
 def import_run_titles(form, text, parts, title):
     try:
         plan = json.loads(form.get("import_range", "null"))
-        if not isinstance(plan, dict) or form.get("title") != plan.get("label"):
+        if not isinstance(plan, dict) or title != plan.get("label"):
             return None
-        book = plan["book"][:85]
+        if not isinstance(plan.get("book"), str) or not isinstance(plan.get("spans"), list):
+            return None
+        book = plan["book"].strip()[:85]
         mode = plan["mode"]
         spans = plan["spans"]
-        if mode not in {"ch", "sc", "pg"} or not 1 <= len(spans) <= 2500:
+        if not isinstance(mode, str) or mode not in {"ch", "sc", "pg"} or not 1 <= len(spans) <= 10_000 or not book:
             return None
+        previous = None
+        for item in spans:
+            if (not isinstance(item, list) or len(item) != 3 or
+                    any(type(value) is not int for value in item[:2]) or (previous is not None and item[0] < previous) or item[1] <= item[0] or
+                    not isinstance(item[2], str) or not re.fullmatch(r"[\w.-]{1,20}", item[2])):
+                return None
+            previous = item[0]
         result = []
         for start, end, _ in parts:
             lo = len(text[:start].encode("utf-16-le")) // 2
             hi = lo + len(text[start:end].encode("utf-16-le")) // 2
             labels = [str(item[2])[:20] for item in spans
-                      if len(item) == 3 and int(item[0]) < hi and int(item[1]) > lo]
+                      if item[0] < hi and item[1] > lo]
             if not labels:
                 return None
             suffix = f"-{mode}{labels[0]}" + (f"-{labels[-1]}" if labels[0] != labels[-1] else "")
@@ -660,12 +704,23 @@ def import_run_titles(form, text, parts, title):
 async def create_job(request: Request):
     uid = current_user(request)["id"]
     async with request.form(max_files=2, max_fields=100, max_part_size=MAX_IMPORT_TEXT * 4) as form:
+        if any(not isinstance(value, str) and key != "reference" for key, value in form.multi_items()):
+            return submit_error(request, "Only the reference field accepts an audio file.")
+        if any(len(form.getlist(key)) != 1 for key in form):
+            return submit_error(request, "Duplicate form fields are not supported. Reload the page and try again.")
         model = form.get("model", "")
         if model not in MODELS:
             return submit_error(request, "Choose a TTS model.")
         folders = []
         saved_voice = None
         try:
+            submission = form.get("submission_key", "")
+            if submission and not re.fullmatch(r"[a-zA-Z0-9-]{16,80}", submission):
+                raise ValueError("Invalid submission receipt. Reload the page and try again.")
+            fingerprint = hashlib.sha256(json.dumps(sorted(
+                (key, value if isinstance(value, str) else [value.filename, value.size])
+                for key, value in form.items() if key != "submission_key"
+            ), ensure_ascii=True).encode()).hexdigest()
             config = settings_from(form, model)
             project = form.get("project") or None
             if project and not one("SELECT id FROM projects WHERE id=? AND user_id=?", (project, uid)):
@@ -682,11 +737,15 @@ async def create_job(request: Request):
                 title = name_from(form, "preset_name")
             else:
                 text = form.get("script", "").replace("\r\n", "\n").replace("\r", "\n").strip()
-                if not text or len(text) > MAX_IMPORT_TEXT:
+                if not text or len(text.encode("utf-16-le")) > MAX_IMPORT_TEXT * 2:
                     raise ValueError("Enter between 1 and 5,000,000 characters of text.")
+                if any(ord(char) < 32 and char not in "\n\t\f" for char in text):
+                    raise ValueError("The script contains invalid control characters.")
                 title = name_from(form, "title", " ".join(text[:120].split())[:60])
                 parts = list(split_runs(text))
                 titles = import_run_titles(form, text, parts, title)
+                if any(not part or len(part) > RUN_CHAR_LIMIT for _, _, part in parts):
+                    raise ValueError("The text could not be split into valid runs. Choose a smaller selection.")
             if model in REFERENCE_MODELS and isinstance(reference, UploadFile) and reference.filename:
                 selected_voice = await run_in_threadpool(store_voice, uid, reference)
                 config["voice_id"] = selected_voice
@@ -716,16 +775,30 @@ async def create_job(request: Request):
                 return notify_voice(response, saved_voice)
             reference_path = reference_file(uid, selected_voice) if model in REFERENCE_MODELS and selected_voice else None
             emotion_path = reference_file(uid, emotion_voice) if emotion_voice else None
+            if shutil.disk_usage(JOBS).free < 1024 ** 3 + len(text.encode("utf-8")) * 2:
+                raise ValueError("The server needs more free disk space before queuing this script.")
             for _ in parts:
                 folder = JOBS / uuid.uuid4().hex
                 folder.mkdir()
                 folders.append(folder)
                 if reference_path:
-                    shutil.copyfile(reference_path, folder / "reference.wav")
+                    await run_in_threadpool(shutil.copyfile, reference_path, folder / "reference.wav")
                 if emotion_path:
-                    shutil.copyfile(emotion_path, folder / "emotion.wav")
+                    await run_in_threadpool(shutil.copyfile, emotion_path, folder / "emotion.wav")
             with connect() as db:
                 db.execute("BEGIN IMMEDIATE")
+                previous = db.execute("SELECT * FROM job_submissions WHERE user_id=? AND request_key=?", (uid, submission)).fetchone() if submission else None
+                if previous:
+                    if previous["fingerprint"] != fingerprint:
+                        raise ValueError("This submission receipt belongs to different text or settings. Edit the script and submit again.")
+                    for folder in folders:
+                        shutil.rmtree(folder, ignore_errors=True)
+                    if request.headers.get("HX-Request"):
+                        return notify_voice(render(request, "notice.html", message="This request is already in the library. No duplicate runs were added.", error=False), saved_voice, queue=True)
+                    return RedirectResponse("/", 303)
+                if submission:
+                    db.execute("DELETE FROM job_submissions WHERE created < datetime('now','-7 days')")
+                    db.execute("INSERT INTO job_submissions(user_id,request_key,fingerprint,runs) VALUES (?,?,?,?)", (uid, submission, fingerprint, len(parts)))
                 ahead = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('running','queued')").fetchone()[0]
                 requester = device_id(request.cookies.get("speech_device"))
                 tab = form.get("request_tab", "")[:64] or None
@@ -738,7 +811,7 @@ async def create_job(request: Request):
                                  or (tab and running["request_tab"] and tab != running["request_tab"])))
                 if priority:
                     ahead = db.execute("SELECT COUNT(*) FROM jobs WHERE status='running' OR "
-                                       "(status='queued' AND queue_priority=1)").fetchone()[0]
+                                       "(status='queued' AND queue_priority>=1)").fetchone()[0]
                 settings_json = json.dumps(config)
                 for index, (folder, (_, _, part)) in enumerate(zip(folders, parts)):
                     suffix = f" ({index + 1} of {len(parts)})" if len(parts) > 1 else ""
@@ -750,9 +823,12 @@ async def create_job(request: Request):
                 if ahead:
                     speech_event(db, {"id": folders[0].name, "user_id": uid, "title": title, "model": model,
                                       "request_device": requester}, "queued", ahead=ahead)
-        except (ValueError, OSError, sqlite3.IntegrityError, HTTPException) as exc:
+        except (ValueError, OSError, sqlite3.Error, HTTPException) as exc:
             for folder in folders:
                 shutil.rmtree(folder, ignore_errors=True)
+            if isinstance(exc, sqlite3.Error):
+                logging.getLogger(__name__).exception("Job submission database error")
+                return submit_error(request, "The queue is busy or unavailable. Wait a moment and retry.")
             return submit_error(request, str(exc))
     if request.headers.get("HX-Request"):
         message = f"{len(parts)} runs added to the queue." if len(parts) > 1 else "Job added to the queue."

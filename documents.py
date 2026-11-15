@@ -23,6 +23,19 @@ IMPORT_EXTENSIONS = sorted(TEXT_EXTENSIONS | EBOOK_EXTENSIONS | {".docx", ".odt"
 WORD = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 WORD_STRICT = "{http://purl.oclc.org/ooxml/wordprocessingml/main}"
 ODF = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
+OFFICE = "{urn:oasis:names:tc:opendocument:xmlns:office:1.0}"
+DRAW = "{urn:oasis:names:tc:opendocument:xmlns:drawing:1.0}"
+WORD_SKIP = {"del", "moveFrom", "pPr", "rPr", "txbxContent", "drawing", "pict"}
+
+
+def paragraphs(node, tags, skip):
+    if node.tag in skip:
+        return
+    if node.tag in tags:
+        yield node
+        return  # Nested paragraphs belong to a textbox, note or other embedded object.
+    for child in node:
+        yield from paragraphs(child, tags, skip)
 
 
 def plain_text(data):
@@ -47,15 +60,42 @@ def office_text(data, extension):
         body = xml.find(ns + "body")
         if body is None:
             raise ValueError("No document body found.")
-        return "\n\n".join(text for p in body.iter(ns + "p") if (text := word_paragraph(p, ns).strip()))
-    return "\n\n".join(text for p in xml.iter() if p.tag in {ODF + "p", ODF + "h"}
-                       and (text := odf_paragraph(p).strip()))
+        fields = []
+        return "\n\n".join(text for p in paragraphs(body, {ns + "p"}, {ns + tag for tag in WORD_SKIP})
+                           if (text := word_paragraph(p, ns, fields).strip()))
+    body = xml.find(OFFICE + "body")
+    if body is None:
+        raise ValueError("No document body found.")
+    skip = {OFFICE + "annotation", ODF + "tracked-changes", ODF + "note", DRAW + "frame"}
+    return "\n\n".join(text for p in paragraphs(body, {ODF + "p", ODF + "h"}, skip)
+                       if (text := odf_paragraph(p).strip()))
 
 
-def word_paragraph(node, ns):
-    if node.tag in {ns + "del", ns + "moveFrom", ns + "pPr", ns + "rPr", ns + "txbxContent"}:
+def word_paragraph(node, ns, fields=None):
+    if fields is None:
+        fields = []
+    if node.tag in {ns + tag for tag in WORD_SKIP}:
+        return ""
+    if node.tag == ns + "r" and any((setting := node.find(ns + "rPr/" + ns + tag)) is not None and
+                                   setting.get(ns + "val", "true").lower() not in {"0", "false", "off"}
+                                   for tag in ("vanish", "webHidden")):
+        return ""
+    if node.tag == ns + "fldSimple" and re.match(r"\s*(PAGE|NUMPAGES|TOC|DATE|TIME)\b", node.get(ns + "instr", ""), re.I):
+        return ""
+    if node.tag == ns + "fldChar":
+        kind = node.get(ns + "fldCharType")
+        if kind == "begin":
+            fields.append("")
+        elif kind == "end" and fields:
+            fields.pop()
+        return ""
+    if node.tag == ns + "instrText":
+        if fields:
+            fields[-1] += node.text or ""
         return ""
     if node.tag == ns + "t":
+        if any(re.match(r"\s*(PAGE|NUMPAGES|TOC|DATE|TIME)\b", field, re.I) for field in fields):
+            return ""
         return node.text or ""
     if node.tag == ns + "tab":
         return "\t"
@@ -63,10 +103,12 @@ def word_paragraph(node, ns):
         return "\n"
     if node.tag == ns + "noBreakHyphen":
         return "\u2011"
-    return "".join(word_paragraph(child, ns) for child in node)
+    return "".join(word_paragraph(child, ns, fields) for child in node)
 
 
 def odf_paragraph(node):
+    if node.tag in {OFFICE + "annotation", ODF + "note", ODF + "page-number", ODF + "page-count", DRAW + "frame"}:
+        return ""
     if node.tag == ODF + "s":
         return " " * max(0, min(100, int(node.get(ODF + "c", "1"))))
     if node.tag == ODF + "tab":
@@ -94,7 +136,9 @@ def import_document(upload):
     extension = Path(upload.filename).suffix.lower()
     if extension not in IMPORT_EXTENSIONS:
         raise ValueError("Choose a supported file such as PDF, DOCX, EPUB, MOBI, or TXT.")
-    if not upload.size or upload.size > MAX_BYTES:
+    actual_size = upload.file.seek(0, 2)
+    upload.file.seek(0)
+    if not actual_size or actual_size > MAX_BYTES:
         raise ValueError("Choose a nonempty document up to 65 MB.")
     warnings = []
     try:
@@ -114,7 +158,7 @@ def import_document(upload):
                 result = rtf_to_text(data.decode("latin-1"))
             else:
                 result = plain_text(data)
-    except (AttributeError, KeyError, LookupError, RecursionError, UnicodeError, zipfile.BadZipFile, ParseError,
+    except (AttributeError, KeyError, LookupError, RecursionError, UnicodeError, RuntimeError, zipfile.BadZipFile, ParseError,
             DefusedXmlException, subprocess.SubprocessError, OSError) as exc:
         raise ValueError("Could not read this document. Check that it opens and is unlocked.") from exc
     result = result.replace("\r\n", "\n").replace("\r", "\n").strip()

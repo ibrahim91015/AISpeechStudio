@@ -1,13 +1,18 @@
+(async () => {
 const editor = document.querySelector('#script');
 const generationLimit = Number(editor?.dataset.generationLimit);
 const generateLabel = document.querySelector('#generate-label');
 const jobTitle = document.querySelector('#speech-form [name=title]');
 const tabKey = 'aispeech-request-tab';
-let requestTab = [...crypto.getRandomValues(new Uint32Array(4))].map(n => n.toString(16)).join('-');
+const newRequestKey = () => [...crypto.getRandomValues(new Uint32Array(4))].map(n => n.toString(16).padStart(8, '0')).join('-');
+const requestTab = newRequestKey();
+let draftTab = requestTab;
 try {
-  requestTab = sessionStorage.getItem(tabKey) || requestTab;
-  sessionStorage.setItem(tabKey, requestTab);
+  draftTab = sessionStorage.getItem(tabKey) || draftTab;
+  sessionStorage.setItem(tabKey, draftTab);
 } catch {}
+const reloading = performance.getEntriesByType('navigation')[0]?.type === 'reload';
+const draftStorage = await openSpeechDrafts(draftTab, reloading);
 let recorder = null;
 let importing = false;
 let voiceUpload = null;
@@ -22,12 +27,13 @@ let lastArabicSample;
 let draft = {models: {}};
 let draftTimer;
 try {
-  if (performance.getEntriesByType('navigation')[0]?.type === 'reload') {
+  if (reloading) {
     for (const key of Object.keys(sessionStorage)) if (key.startsWith(draftPrefix)) sessionStorage.removeItem(key);
   }
   const url = new URLSearchParams(location.search);
   if (!url.has('preset') && !url.has('reuse')) {
-    draft = JSON.parse(sessionStorage.getItem(draftKey)) || draft;
+    draft = await draftStorage.get(draftKey) || draft;
+    draft.models ||= {};
     if (url.has('model')) {
       draft.model = modelSelect?.value;
       if (draft.common) draft.common.model = draft.model;
@@ -63,7 +69,7 @@ function rememberDraft() {
   if (fields) draft.models[fields.dataset.model] = values(fields);
   draft.common = values(studioForm);
   draft.model = modelSelect.value;
-  try { sessionStorage.setItem(draftKey, JSON.stringify(draft)); } catch { /* Best effort when storage is full. */ }
+  return draftStorage.set(draftKey, draft);
 }
 
 function scheduleSave() {
@@ -81,7 +87,7 @@ function updateGenerateLabel() {
 }
 
 function countRuns(value) {
-  return Math.ceil((value.length - (value.match(/[\udc00-\udfff]/g)?.length || 0)) / generationLimit);
+  return SpeechRuns.count(value, generationLimit);
 }
 
 function generationText() {
@@ -106,6 +112,7 @@ function fileTitle(filename) {
 
 function replaceText(value) {
   delete draft.importRange;
+  delete draft.submissionKey;
   editor.value = value;
   refreshCount();
   updateGenerateLabel();
@@ -129,11 +136,13 @@ function uploadFile(url, field, file, onProgress) {
     const form = new FormData();
     form.append(field, file);
     xhr.open('POST', url);
+    if (url === '/import-text') xhr.setRequestHeader('X-Import-Async', '1');
     xhr.responseType = 'json';
+    xhr.timeout = 10 * 60 * 1000;
     xhr.upload.onprogress = (event) => onProgress(event.lengthComputable ? event.loaded / event.total : null);
     xhr.upload.onload = () => onProgress(1);
     xhr.onload = () => {
-      if (xhr.status === 200 && xhr.response) resolve(xhr.response);
+      if ([200, 202].includes(xhr.status) && xhr.response && typeof xhr.response === 'object') resolve(xhr.response);
       else {
         const failures = {
           200: 'The server returned a page instead of an upload receipt. Check your sign-in.',
@@ -142,6 +151,7 @@ function uploadFile(url, field, file, onProgress) {
           413: 'The proxy rejected the file size. Try a smaller file.',
           502: 'The proxy could not reach the studio. Press Upload to retry.',
           504: 'The proxy timed out. Press Upload to retry.',
+          524: 'The proxy timed out. Try again after checking the server connection.',
         };
         const detail = xhr.response?.detail;
         reject(new Error(file.name + ': ' + (typeof detail === 'string' ? detail :
@@ -149,8 +159,37 @@ function uploadFile(url, field, file, onProgress) {
       }
     };
     xhr.onerror = xhr.onabort = () => reject(new Error(file.name + ': Connection lost during upload. Press Upload to retry.'));
+    xhr.ontimeout = () => reject(new Error(file.name + ': Upload timed out. Check the connection and try again.'));
     xhr.send(form);
   });
+}
+
+async function waitForImport(receipt, file, progress) {
+  if (!receipt.import_id) return receipt;
+  const deadline = Date.now() + 7 * 60 * 1000;
+  let failures = 0;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 800));
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
+      let response;
+      try { response = await fetch('/imports/' + encodeURIComponent(receipt.import_id), {cache: 'no-store', signal: controller.signal}); }
+      finally { clearTimeout(timer); }
+      if ([401, 403].includes(response.status) || response.redirected) throw new Error('Sign in to Pangolin again, then retry the document import.');
+      if (response.status >= 500) throw new TypeError('Server temporarily unavailable');
+      if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('Sign in again. The server returned a page instead of an import receipt.');
+      const result = await response.json();
+      if (response.status === 200) return result;
+      if (response.status !== 202) throw new Error(result.detail || 'Document import failed.');
+      failures = 0;
+      showProgress(progress, result.status + ' · ' + file.name, null);
+    } catch (error) {
+      if (!(error instanceof TypeError || error.name === 'AbortError') || ++failures >= 4) throw error;
+      showProgress(progress, 'Reconnecting to document import…', null);
+    }
+  }
+  throw new Error('Document import timed out. Try uploading it again.');
 }
 
 const ebookPicker = document.querySelector('#ebook-picker');
@@ -211,16 +250,13 @@ if (ebookPicker) {
   }
 
   function saveBooks() {
-    try {
-      sessionStorage.removeItem(ebookKey);
-      sessionStorage.removeItem(rangeKey);
-      if (ebooks.length) sessionStorage.setItem(ebookKey, JSON.stringify(ebooks));
-    } catch { /* Large imports stay available while this page is open. */ }
+    draftStorage.set(ebookKey, ebooks);
+    try { sessionStorage.removeItem(rangeKey); } catch {}
   }
 
   let savedRange;
   try {
-    ebooks = JSON.parse(sessionStorage.getItem(ebookKey)) || [];
+    ebooks = await draftStorage.get(ebookKey) || [];
     savedRange = JSON.parse(sessionStorage.getItem(rangeKey)) || undefined;
   } catch {}
   showBooks(savedRange);
@@ -245,12 +281,14 @@ if (ebookPicker) {
     const name = (book.title || fileTitle(book.name)).slice(0, 85);
     const tag = {chapters: 'ch', sections: 'sc', pages: 'pg'}[mode.value];
     const spans = entries.slice(first, last + 1).map((entry, index) => {
-      const numbered = entry.label.match(/^(?:chapter\s+)?(\d+)(?:\b|[.:])/i);
-      const token = tag !== 'sc' && numbered ? numbered[1] : first + index + 1;
-      return [entry.start - offset, entry.end - offset, String(token)];
+      const numbered = entry.label.match(/^(?:(?:chapter|interlude)\s+)?((?:[ivxlcdm]+-)?\d+(?:-\d+)*)(?:\b|[.:])/i);
+      const special = entry.label.match(/^(prelude|prologue|epilogue|introduction)\b/i);
+      const token = tag !== 'sc' && numbered ? numbered[1] : tag === 'ch' && special ? special[1].toLowerCase() : first + index + 1;
+      return [Math.max(0, entry.start - offset), Math.min(text.length, entry.end - offset), String(token)];
     });
     const begin = spans[0][2], end = spans.at(-1)[2];
-    const label = name + '-' + tag + begin + (begin === end ? '' : '-' + end);
+    const suffix = '-' + tag + begin + (begin === end ? '' : '-' + end);
+    const label = name.slice(0, 100 - suffix.length) + suffix;
     replaceText(text);
     if (setImportTitle(label)) draft.importRange = {book: name, mode: tag, label, spans};
     rememberDraft();
@@ -281,10 +319,11 @@ async function importFiles(files) {
   try {
     for (const file of files) {
       if (file.size > Number(editor.dataset.documentLimit)) throw new Error(file.name + ' exceeds 65 MB.');
-      const result = await uploadFile('/import-text', 'document', file, (fraction) => {
+      const receipt = await uploadFile('/import-text', 'document', file, (fraction) => {
         const percent = fraction === null || !total ? null : Math.floor(100 * (uploaded + fraction * file.size) / total);
         showProgress(progress, fraction === 1 ? 'Reading ' + file.name : 'Uploading documents', percent);
       });
+      const result = await waitForImport(receipt, file, progress);
       uploaded += file.size;
       if (Array.isArray(result.chapters)) {
         books.push({...result, name: file.name});
@@ -500,20 +539,30 @@ if (editor) {
   }
   if (draft.model && draft.model !== current && [...modelSelect.options].some(option => option.value === draft.model)) {
     modelSelect.value = draft.model;
-    window.addEventListener('DOMContentLoaded', () => htmx.trigger(modelSelect, 'change'), {once: true});
+    if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', () => htmx.trigger(modelSelect, 'change'), {once: true});
+    else htmx.trigger(modelSelect, 'change');
   }
   refreshCount();
   updateGenerateLabel();
   refreshModelUi();
   studioForm.addEventListener('input', event => {
+    delete draft.submissionKey;
     if (event.target.id === 'reference-transcript' && !event.target.readOnly) {
       transcriptValues()[event.target.dataset.voice] = event.target.value;
     }
     scheduleSave();
   });
-  studioForm.addEventListener('change', scheduleSave);
+  studioForm.addEventListener('change', () => { delete draft.submissionKey; scheduleSave(); });
   studioForm.addEventListener('toggle', scheduleSave, true);
   window.addEventListener('pagehide', rememberDraft);
+  document.addEventListener('click', async event => {
+    const link = event.target.closest('a[href]');
+    if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey ||
+        !link || link.target || link.hasAttribute('download') || link.origin !== location.origin || link.pathname === location.pathname) return;
+    event.preventDefault();
+    await rememberDraft();
+    location.assign(link.href);
+  });
   window.addEventListener('pageshow', async event => {
     if (!event.persisted || !studioFields.querySelector('#reference-transcript')) return;
     const select = studioFields.querySelector('#voice-id');
@@ -536,7 +585,7 @@ if (editor) {
     refreshCount();
     updateGenerateLabel();
   });
-  editor.addEventListener('select', updateGenerateLabel);
+  editor.addEventListener('select', () => { delete draft.submissionKey; updateGenerateLabel(); });
   editor.addEventListener('keyup', updateGenerateLabel);
   editor.addEventListener('dragover', (event) => {
     if (!event.dataTransfer.types.includes('Files')) return;
@@ -873,11 +922,13 @@ document.addEventListener('htmx:configRequest', (event) => {
     return;
   }
   const {text, start} = generationText();
+  draft.submissionKey ||= newRequestKey();
+  formData.set('submission_key', draft.submissionKey);
   formData.set('script', text);
   if (draft.importRange && jobTitle.value === draft.importRange.label) {
     const plan = draft.importRange;
     const spans = plan.spans.filter(span => span[0] < start + text.length && span[1] > start)
-      .map(([lo, hi, label]) => [lo - start, hi - start, label]);
+      .map(([lo, hi, label]) => [Math.max(0, lo - start), Math.min(text.length, hi - start), label]);
     formData.set('import_range', JSON.stringify({...plan, spans}));
   }
 });
@@ -928,6 +979,16 @@ document.addEventListener('click', (event) => {
     editor.setRangeText(button.dataset.mark, end, end, 'end');
     editor.focus();
     refreshCount();
+    delete draft.importRange;
+    delete draft.submissionKey;
+    updateGenerateLabel();
+    scheduleSave();
+  }
+});
+
+document.addEventListener('htmx:afterRequest', event => {
+  if (event.detail.elt === studioForm && event.detail.xhr.getResponseHeader('HX-Trigger')?.includes('queueUpdated')) {
+    delete draft.submissionKey;
     scheduleSave();
   }
 });
@@ -1071,3 +1132,8 @@ document.addEventListener('htmx:afterSwap', (event) => {
   });
   apply();
 })();
+})().catch(error => {
+  console.error('Studio initialization failed', error);
+  const status = document.querySelector('#import-status');
+  if (status) { status.hidden = false; status.textContent = 'Studio controls could not initialize. Reload the page to retry.'; }
+});

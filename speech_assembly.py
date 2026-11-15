@@ -17,7 +17,8 @@ class SpeechAssembly:
         try:
             state = json.loads(self.checkpoint.read_text(encoding="utf-8"))
             size, index, rate, channels = (state[key] for key in ("size", "index", "rate", "channels"))
-            if (state["signature"] == self.signature and 0 < index <= len(chunks) and
+            if (all(type(value) is int for value in (size, index, rate, channels)) and
+                    state["signature"] == self.signature and 0 < index <= len(chunks) and
                     0 < rate <= 192000 and channels in (1, 2) and size > 0 and
                     size % (channels * 2) == 0 and self.path.stat().st_size >= size):
                 self.index, self.size, self.rate, self.channels = index, size, rate, channels
@@ -34,7 +35,7 @@ class SpeechAssembly:
     def append(self, part, pause_ms):
         with wave.open(str(part), "rb") as source:
             rate, channels = source.getframerate(), source.getnchannels()
-            if (source.getsampwidth() != 2 or channels not in (1, 2) or not source.getnframes() or
+            if (source.getsampwidth() != 2 or channels not in (1, 2) or not source.getnframes() or not 8000 <= rate <= 192000 or
                     (self.rate and (rate, channels) != (self.rate, self.channels))):
                 raise RuntimeError("A chunk’s audio format did not match the recording.")
             self.rate, self.channels = rate, channels
@@ -68,6 +69,12 @@ class SpeechAssembly:
             file.flush()
             os.fsync(file.fileno())
         staged.replace(self.checkpoint)
+        if os.name == "posix":
+            directory = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
         self.index = index
 
     @property

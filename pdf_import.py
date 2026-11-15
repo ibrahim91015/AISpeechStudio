@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections import Counter
 from pathlib import Path
 
 
@@ -41,7 +42,7 @@ def tagged_paragraphs(text):
                 active.append(value[1:-1])
             continue
         tag = value.split(maxsplit=1)[0]
-        if tag == "Artifact":
+        if tag in {"Artifact", "Figure", "Caption"}:
             active = False
         elif tag in PARAGRAPH_TAGS and active is not False:
             active = []
@@ -130,6 +131,47 @@ def scan_pages(path, pages, missing, work, limit):
     return warnings
 
 
+def clean_print_pages(pages, layout):
+    """Conservative print furniture removal; never guess at unlabeled narrative."""
+    lines = [[line.strip() for line in page.splitlines() if line.strip()] for page in pages]
+    for edge in (0, -1):
+        counts = Counter(page[edge] for page in lines if len(page) >= 4)
+        repeated = {line for line, count in counts.items() if count >= max(3, len(pages) * .2)
+                    and len(line) < 120 and not sentence_end(line)}
+        numbers = {i: int(page[edge]) for i, page in enumerate(lines)
+                   if len(page) >= 4 and re.fullmatch(r"\d{1,5}", page[edge])}
+        page_numbers = {i for i, n in numbers.items() if any(
+            all(numbers.get(j) == n + j - i for j in range(start, start + 3))
+            for start in range(max(0, i - 2), i + 1))}
+        for index, page in enumerate(lines):
+            if len(page) < 4 or not (page[edge] in repeated or index in page_numbers):
+                continue
+            for collection in (pages, layout):
+                values = collection[index].splitlines()
+                nonempty = [i for i, value in enumerate(values) if value.strip()]
+                if nonempty and values[nonempty[edge]].strip() == page[edge]:
+                    values.pop(nonempty[edge])
+                    collection[index] = "\n".join(values)
+    start, end = 0, len(pages)
+    # Restrict front/back matter inference to long books with explicit publisher/TOC cues.
+    if len(pages) >= 40:
+        front = "\n".join(pages[:min(40, len(pages) // 5)])
+        if re.search(r"(?im)^\s*(?:table of contents|contents|copyright|ISBN)\b", front):
+            for i, page in enumerate(pages[:40]):
+                heading = page.strip().splitlines()[0] if page.strip() else ""
+                if (re.match(r"^(?:prelude|prologue|introduction|preface|foreword|chapter\s+(?:one|1|i)\b)\b", heading, re.I)
+                        and len(page) > 500 and len(re.findall(r"[.!?][”’\"]?(?:\s|$)", page)) >= 4):
+                    start = i
+                    break
+        for i in range(max(start + 1, len(pages) * 9 // 10), len(pages)):
+            heading = pages[i].strip().splitlines()[0] if pages[i].strip() else ""
+            copyright_page = re.match(r"^(?:this is a work of fiction|copyright)\b", heading, re.I) and re.search(r"ISBN|all rights reserved|copyright", pages[i], re.I)
+            if copyright_page or re.fullmatch(r"(?:table of )?contents", heading, re.I):
+                end = i
+                break
+    return pages[start:end], layout[start:end]
+
+
 def pdf_text(upload, max_text):
     limit = max_text * 6
     with tempfile.TemporaryDirectory() as folder:
@@ -168,4 +210,5 @@ def pdf_text(upload, max_text):
             layout = []
         if not layout or len(layout) < len(pages):
             layout = [""] * len(pages)
+        pages, layout = clean_print_pages(pages, layout)
         return join_print_pages(pages, layout), warnings
