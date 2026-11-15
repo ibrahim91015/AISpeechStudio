@@ -407,16 +407,20 @@ document.addEventListener('change', (event) => {
 });
 
 
+function referenceRowMenus(card) {
+  const top = card.getBoundingClientRect().top;
+  return [...card.parentElement.children]
+    .filter(item => Math.abs(item.getBoundingClientRect().top - top) < 1)
+    .map(item => item.querySelector('.reference-manage'));
+}
+
 const referenceCollections = document.querySelector('.reference-collections');
 referenceCollections?.addEventListener('click', event => {
   const summary = event.target.closest('.reference-manage > summary');
   if (!summary) return;
-  const card = summary.closest('.voice-card');
-  const top = card.getBoundingClientRect().top;
-  const open = !summary.parentElement.open;
-  const row = [...card.parentElement.children].filter(item => Math.abs(item.getBoundingClientRect().top - top) < 1);
   event.preventDefault();
-  for (const item of row) item.querySelector('.reference-manage').open = open;
+  const open = !summary.parentElement.open;
+  for (const menu of referenceRowMenus(summary.closest('.voice-card'))) menu.open = open;
 });
 
 referenceCollections?.addEventListener('submit', async event => {
@@ -426,6 +430,7 @@ referenceCollections?.addEventListener('submit', async event => {
   const button = form.querySelector('button');
   if (button.disabled) return;
   const card = form.closest('.voice-card');
+  const row = referenceRowMenus(card);
   const status = card.querySelector('.reference-rename-status');
   const input = form.elements.namedItem('name');
   const submitted = input.value;
@@ -446,9 +451,13 @@ referenceCollections?.addEventListener('submit', async event => {
     if (input.value === submitted) input.value = result.name;
     card.querySelector('h3').textContent = result.name;
     form.querySelector('label').textContent = 'New name for ' + result.name;
-    card.querySelector('.reference-manage > summary').setAttribute('aria-label', 'Manage ' + result.name);
+    const summary = card.querySelector('.reference-manage > summary');
+    summary.setAttribute('aria-label', 'Manage ' + result.name);
     card.querySelector('audio').setAttribute('aria-label', 'Play ' + result.name);
-    status.textContent = 'Name saved.';
+    status.hidden = true;
+    const menus = card.getClientRects().length ? referenceRowMenus(card) : row;
+    if (menus.some(menu => menu.contains(document.activeElement))) summary.focus();
+    for (const menu of menus) menu.open = false;
   } catch (error) {
     status.classList.add('notice-error');
     status.textContent = error instanceof SyntaxError ? 'Could not save the name. Try again.' : error.message;
