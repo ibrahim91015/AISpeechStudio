@@ -21,7 +21,7 @@ from starlette.requests import ClientDisconnect
 
 from catalog import ARABIC_SAMPLES, DIALECTS, EMOTIONS, FLAGS, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, REFERENCE_VOICES, SPEAKERS, TASHKIL, controls, defaults, settings_from
 from catalog import CHATTERBOX_LANGUAGES, HIGGS_MODELS, REFERENCE_MODELS, REQUIRED_REFERENCE
-from demo_voices import CLIPS, COLLECTION_CLIPS, transcript_for, voice_collections
+from demo_voices import CLIPS, COLLECTION_CLIPS, edited_transcript, reference_filename, transcript_record, voice_collections
 from documents import IMPORT_EXTENSIONS, MAX_TEXT, import_document
 from queue_worker import Worker
 from notification_events import device_id, enqueue, speech_event
@@ -223,7 +223,7 @@ def studio(request: Request, model: str = "qwen", preset: int | None = None, reu
         clip = CLIPS.get(sample_voice.removeprefix("demo:"), {})
         if model in {"index", "chatterbox"} and clip.get("language_code"):
             config["language"] = clip["language_code"]
-        if model == "qwen_base" and not transcript_for(sample_voice):
+        if model == "qwen_base" and not saved_transcript(uid, sample_voice).get("text"):
             config["x_vector_only"] = True
     else:
         sample_voice = ""
@@ -367,6 +367,58 @@ def voices_library(request: Request, uploaded: int = 0, skipped: int = 0, group:
                   (current_user(request)["id"],))
     return render(request, "voices.html", page="voices", voices=voices, uploaded=uploaded, skipped=skipped,
                   reference_collections=voice_collections(), open_group=group)
+
+
+def saved_transcript(uid, voice_key, db=None):
+    if not voice_key:
+        return {}
+    if db is None:
+        with connect() as database:
+            return saved_transcript(uid, voice_key, database)
+    filename = reference_filename(voice_key)
+    if filename:
+        edit = db.execute("SELECT text FROM reference_transcript_edits WHERE filename=?", (filename,)).fetchone()
+        if edit is not None:
+            return edited_transcript(edit["text"])
+        return transcript_record(voice_key, filename)
+    if voice_key.startswith("previous:"):
+        row = db.execute("SELECT settings FROM jobs WHERE id=? AND user_id=?",
+                         (voice_key.removeprefix("previous:"), uid)).fetchone()
+        if row:
+            settings = json.loads(row["settings"])
+            return edited_transcript(settings.get("reference_text") or settings.get("resolved_reference_text"))
+        return {}
+    row = db.execute("SELECT transcript FROM voices WHERE id=? AND user_id=?", (voice_key, uid)).fetchone()
+    return edited_transcript(row["transcript"]) if row else {}
+
+
+@app.get("/voices/transcript")
+def get_voice_transcript(request: Request, voice: str):
+    uid = current_user(request)["id"]
+    filename = reference_filename(voice)
+    if not filename and not one("SELECT 1 FROM voices WHERE id=? AND user_id=?", (voice, uid)):
+        raise HTTPException(404, "Reference recording not found.")
+    return JSONResponse({**edited_transcript(""), **saved_transcript(uid, voice), "shared": bool(filename)},
+                        headers={"Cache-Control": "private, no-store"})
+
+
+@app.post("/voices/transcript")
+async def save_voice_transcript(request: Request):
+    uid = current_user(request)["id"]
+    async with request.form(max_files=0, max_fields=2) as form:
+        voice = form.get("voice", "")
+        text = form.get("transcript", "").strip()
+        if len(text) > 2048:
+            raise HTTPException(400, "Keep the transcript within 2,048 characters.")
+        filename = reference_filename(voice)
+        with connect() as db:
+            if filename:
+                db.execute("INSERT INTO reference_transcript_edits(filename,text) VALUES (?,?) "
+                           "ON CONFLICT(filename) DO UPDATE SET text=excluded.text", (filename, text))
+            elif not db.execute("UPDATE voices SET transcript=? WHERE id=? AND user_id=?",
+                                (text, voice, uid)).rowcount:
+                raise HTTPException(404, "Reference recording not found.")
+    return {**edited_transcript(text), "shared": bool(filename)}
 
 
 def reference_collection_redirect(group, clip_key=None):
@@ -604,11 +656,15 @@ async def create_job(request: Request):
                 saved_voice = one("SELECT id,name FROM voices WHERE id=?", (selected_voice,))
             if model in REQUIRED_REFERENCE and not selected_voice:
                 raise ValueError(f"Choose or upload a reference voice for {MODELS[model]}.")
-            if model == "qwen_base" and not config["x_vector_only"]:
-                if not (config["reference_text"] or transcript_for(selected_voice)):
+            if model in HIGGS_MODELS or model == "qwen_base":
+                record = saved_transcript(uid, selected_voice) if not config["reference_text"] else {}
+                auto_text = record.get("first_30s", record.get("text", "")) if model in HIGGS_MODELS else record.get("text", "")
+                if model == "qwen_base" and not config["x_vector_only"] and not (config["reference_text"] or auto_text):
                     raise ValueError("Enter the reference transcript or enable Clone without transcript.")
-            if model in HIGGS_MODELS and not selected_voice and config["reference_text"]:
-                raise ValueError("Choose the recording that matches the reference transcript.")
+                if model in HIGGS_MODELS and not selected_voice and config["reference_text"]:
+                    raise ValueError("Choose the recording that matches the reference transcript.")
+                if not is_preset:
+                    config["resolved_reference_text"] = auto_text
             if is_preset:
                 with connect() as db:
                     db.execute("INSERT INTO presets(user_id,name,model,settings) VALUES (?,?,?,?) ON CONFLICT(user_id,name) DO UPDATE SET model=excluded.model, settings=excluded.settings",

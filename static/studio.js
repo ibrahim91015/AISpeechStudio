@@ -386,6 +386,98 @@ document.querySelector('.reference-collections')?.addEventListener('submit', asy
   }
 });
 
+(() => {
+  const dialog = document.querySelector('#voice-transcript-dialog');
+  if (!dialog) return;
+  const form = document.querySelector('#voice-transcript-form');
+  const text = form.elements.transcript;
+  const save = form.querySelector('button');
+  const player = document.querySelector('#transcript-audio');
+  const source = document.querySelector('#transcript-source');
+  const status = document.querySelector('#transcript-status');
+  const origin = document.querySelector('#transcript-origin');
+  const scope = document.querySelector('#transcript-scope');
+  const labels = {published: 'Published transcript', machine: 'Machine transcript', edited: 'Edited transcript'};
+  let asset;
+  let version = 0;
+
+  async function transcriptRequest(url, options) {
+    const response = await fetch(url, options);
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || typeof result.text !== 'string') {
+      throw new Error(typeof result.detail === 'string' ? result.detail : 'The transcript is unavailable. Try again.');
+    }
+    return result;
+  }
+
+  function showRecord(record) {
+    const label = labels[record.kind] || 'No transcript';
+    origin.textContent = record.kind === 'machine' ? label + ' · check it against the recording' : label;
+    scope.textContent = record.shared ? 'Changes apply to all profiles.' : 'Changes apply to this uploaded clip.';
+    source.hidden = !record.source;
+    if (record.source) source.href = record.source;
+    else source.removeAttribute('href');
+  }
+
+  document.addEventListener('click', async event => {
+    const button = event.target.closest('[data-edit-transcript]');
+    if (!button) return;
+    const card = button.closest('.voice-card');
+    const generation = ++version;
+    asset = card.querySelector('[data-transcript-asset]').dataset.transcriptAsset;
+    form.elements.voice.value = button.dataset.editTranscript;
+    document.querySelector('#transcript-voice-name').textContent = card.querySelector('h3').textContent;
+    player.src = card.querySelector('audio').getAttribute('src');
+    text.value = origin.textContent = scope.textContent = '';
+    source.hidden = true;
+    text.disabled = save.disabled = true;
+    status.className = '';
+    status.textContent = 'Loading transcript…';
+    dialog.showModal();
+    try {
+      const record = await transcriptRequest('/voices/transcript?voice=' + encodeURIComponent(button.dataset.editTranscript), {cache: 'no-store'});
+      if (generation !== version) return;
+      text.value = record.text;
+      showRecord(record);
+      status.textContent = '';
+      text.disabled = save.disabled = false;
+      text.focus();
+    } catch (error) {
+      if (generation !== version) return;
+      status.className = 'notice-error';
+      status.textContent = error.message;
+    }
+  });
+
+  dialog.addEventListener('close', () => {
+    version++;
+    player.removeAttribute('src');
+    player.load();
+  });
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (save.disabled) return;
+    const generation = version;
+    save.disabled = true;
+    status.className = '';
+    status.textContent = 'Saving transcript…';
+    try {
+      const record = await transcriptRequest(form.action, {method: 'POST', body: new URLSearchParams(new FormData(form))});
+      if (generation !== version) return;
+      for (const indicator of document.querySelectorAll('[data-transcript-asset]')) {
+        if (indicator.dataset.transcriptAsset === asset) indicator.textContent = labels[record.kind] || 'No transcript';
+      }
+      dialog.close();
+    } catch (error) {
+      if (generation !== version) return;
+      status.className = 'notice-error';
+      status.textContent = error.message;
+      save.disabled = false;
+    }
+  });
+})();
+
 const libraryFile = document.querySelector('#voice-files');
 if (libraryFile) {
   const name = document.querySelector('#new-voice-name');

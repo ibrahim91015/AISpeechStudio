@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS voices (
 CREATE TABLE IF NOT EXISTS reference_clip_names (
     clip_key TEXT PRIMARY KEY, name TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS reference_transcript_edits (
+    filename TEXT PRIMARY KEY, text TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS push_subscriptions (
     endpoint TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     p256dh TEXT NOT NULL, auth TEXT NOT NULL, last_test INTEGER NOT NULL DEFAULT 0
@@ -93,7 +96,7 @@ def setup():
     with connect() as db:
         db.execute("PRAGMA journal_mode=WAL")
         db.executescript(SCHEMA)
-        columns = {"voices": {"original_name": "TEXT", "media_type": "TEXT", "size": "INTEGER", "duration": "REAL"},
+        columns = {"voices": {"original_name": "TEXT", "media_type": "TEXT", "size": "INTEGER", "duration": "REAL", "transcript": "TEXT"},
                    "jobs": {"queue_ahead": "INTEGER NOT NULL DEFAULT 0", "request_device": "TEXT"},
                    "push_subscriptions": {"device_id": "TEXT", "mobile": "INTEGER NOT NULL DEFAULT 0",
                                           "last_seen": "INTEGER NOT NULL DEFAULT 0"},

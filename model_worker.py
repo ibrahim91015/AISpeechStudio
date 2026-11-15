@@ -133,8 +133,12 @@ def prepare(kind, model, data, state):
     return {"dialect": dialect, "reference": reference}
 
 
-def reference_transcript(settings):
-    return settings.get("reference_text") or transcript_for(settings.get("voice_id"))
+def reference_transcript(settings, *, first_30s=False):
+    if settings.get("reference_text"):
+        return settings["reference_text"]
+    if "resolved_reference_text" in settings:
+        return settings["resolved_reference_text"]
+    return transcript_for(settings.get("voice_id"), first_30s=first_30s)
 
 
 @contextmanager
@@ -188,7 +192,7 @@ def render(kind, model, data, state):
                     )
             wav = wavs[0]
         elif kind in HIGGS_MODELS:
-            wav, rate = model.render(data["text"], reference_transcript(s), s)
+            wav, rate = model.render(data["text"], reference_transcript(s, first_30s=True), s)
         elif kind == "index":
             mode = s["emo_mode"]
             vector = model.normalize_emo_vec(s["emo_vector"], apply_bias=True) if mode == "vector" else None

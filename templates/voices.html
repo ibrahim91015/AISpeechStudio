@@ -1,5 +1,8 @@
 {% extends 'base.html' %}
 {% block title %}Voices · AI Speech Studio{% endblock %}
+{% macro transcript_label(kind) -%}
+{{ {'published':'Published transcript', 'machine':'Machine transcript', 'edited':'Edited transcript'}.get(kind, 'No transcript') }}
+{%- endmacro %}
 {% block body %}
 <div class="page-heading"><h1>Voices</h1><p>Save and manage reference clips for voice cloning.</p></div>
 <div class="library-grid voices-grid">
@@ -12,6 +15,7 @@
         <div class="voice-meta">
           <h3>{{ voice.name }}</h3>
           {% if voice.original_name %}<small>{{ voice.original_name }}{% if voice.duration %} · {{ '%.1f'|format(voice.duration) }} s{% endif %}</small>{% endif %}
+          <small class="voice-transcript-state" data-transcript-asset="upload:{{ voice.id }}">{{ transcript_label('edited' if voice.transcript else 'none') }}</small>
         </div>
         <audio controls preload="none" src="/voices/{{ voice.id }}/audio" aria-label="Play {{ voice.name }}"></audio>
         <div class="voice-actions">
@@ -23,6 +27,7 @@
               <input id="voice-{{ voice.id }}" name="name" value="{{ voice.name }}" maxlength="100" required>
               <button class="button tonal">Rename</button>
             </form>
+            <button class="quiet" type="button" data-edit-transcript="{{ voice.id }}">Edit Transcript</button>
             <form method="post" action="/library/voices/{{ voice.id }}/delete" data-confirm="Delete this voice and its uploaded clip?">
               <button class="quiet danger" aria-label="Delete {{ voice.name }}">Delete clip</button>
             </form>
@@ -63,7 +68,9 @@
         <div class="voice-list reference-clips">
           {% for clip in collection.clips %}
             <article class="voice-card" id="reference-clip-{{ clip.key }}">
-              <div class="voice-meta"><h3>{{ clip.name }}</h3><small>{{ clip.language }}{% if clip.duration %} · {{ '%.1f'|format(clip.duration) }} s{% endif %}</small></div>
+              <div class="voice-meta"><h3>{{ clip.name }}</h3><small>{{ clip.language }}{% if clip.duration %} · {{ '%.1f'|format(clip.duration) }} s{% endif %}</small>
+                <small class="voice-transcript-state" data-transcript-asset="{{ clip.transcript_asset }}">{{ transcript_label(clip.transcript_record.kind) }}</small>
+              </div>
               <audio controls preload="none" src="{{ clip.audio_url }}" aria-label="Play {{ clip.name }}"></audio>
               <div class="voice-actions">
                 <a class="quiet" href="/?model={{ collection.studio_model }}&amp;sample_voice={{ clip.key|urlencode }}">Use in Studio</a>
@@ -76,6 +83,10 @@
                     <input id="rename-{{ collection.key }}-{{ loop.index }}" name="name" value="{{ clip.name }}" maxlength="100" required>
                     <button class="button tonal">Save name</button>
                   </form>
+                </details>
+                <details class="voice-edit">
+                  <summary class="quiet" aria-label="Manage {{ clip.name }}">Manage</summary>
+                  <button class="quiet" type="button" data-edit-transcript="{{ clip.key }}">Edit Transcript</button>
                 </details>
               </div>
             </article>
@@ -99,4 +110,18 @@
     </div>
   {% endfor %}
 </section>
+<dialog class="surface share-dialog" id="voice-transcript-dialog" aria-labelledby="transcript-heading">
+  <div class="section-head"><h2 id="transcript-heading">Edit transcript</h2><form method="dialog"><button class="quiet">Close</button></form></div>
+  <p id="transcript-voice-name"></p>
+  <audio id="transcript-audio" controls preload="none" aria-label="Listen to the reference"></audio>
+  <form class="share-content" id="voice-transcript-form" method="post" action="/voices/transcript">
+    <input name="voice" type="hidden">
+    <p id="transcript-scope"></p>
+    <div><small id="transcript-origin"></small> <a class="quiet" id="transcript-source" target="_blank" rel="noopener" hidden>Source</a></div>
+    <label>Transcript <textarea name="transcript" rows="7" maxlength="2048" dir="auto" disabled></textarea></label>
+    <small>Save an empty editor to clear the transcript.</small>
+    <p id="transcript-status" aria-live="polite"></p>
+    <button class="button primary" type="submit" disabled>Save transcript</button>
+  </form>
+</dialog>
 {% endblock %}
