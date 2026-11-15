@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
+from generation_limits import SpeechLimitError
 from storage import AISPEECH, ROOT
 
 
@@ -71,6 +72,8 @@ class HiggsBF16:
             prompt, self.reference, max_new_tokens=settings["max_new_tokens"],
             temperature=settings["temperature"], top_p=settings["top_p"], top_k=settings["top_k"],
         )
+        if len(delayed) >= settings["max_new_tokens"]:
+            raise SpeechLimitError("Higgs BF16 exhausted its audio tokens before the end of the chunk.")
         wave = bundle.codec.decode(n.reverse_delay_pattern(delayed))
         return wave.numpy(), n.SAMPLE_RATE
 
@@ -136,8 +139,14 @@ class HiggsQ8:
             with LOCAL_HTTP.open(req, timeout=160) as response:
                 audio = response.read(16 * MIB + 1)
         except HTTPError as exc:
-            detail = exc.read(1024).decode(errors="replace")
-            raise RuntimeError(f"Higgs Q8 could not generate this chunk: {detail}") from exc
+            detail = exc.read(2048).decode(errors="replace")
+            try:
+                message = json.loads(detail)["error"]["message"]
+            except (ValueError, KeyError, TypeError):
+                message = detail
+            if "reached max_tokens" in message and "before EOC" in message:
+                raise SpeechLimitError("Higgs Q8 exhausted its audio tokens before the end of the chunk.") from exc
+            raise RuntimeError(f"Higgs Q8 could not generate this chunk: {message}") from exc
         if len(audio) > 16 * MIB:
             raise RuntimeError("Higgs Q8 returned more audio than one chunk can hold.")
         return sf.read(io.BytesIO(audio), dtype="float32")

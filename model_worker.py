@@ -5,10 +5,13 @@ import json
 import os
 import random
 import sys
+import warnings
+from contextlib import contextmanager
 from pathlib import Path
 
 from catalog import ARABIC, CHATTERBOX, DIALECTS, FLAGS, HIGGS_MODELS, INDEX_GENERATION, QWEN
 from demo_voices import transcript_for
+from generation_limits import SpeechLimitError
 from storage import AISPEECH, REFERENCES, ROOT
 
 
@@ -134,6 +137,26 @@ def reference_transcript(settings):
     return settings.get("reference_text") or transcript_for(settings.get("voice_id"))
 
 
+@contextmanager
+def check_end_token(module, method, eos, qwen=False):
+    # Observe the codec stream before the adapter removes its end marker.
+    original = getattr(module, method)
+
+    def checked(*args, **kwargs):
+        result = original(*args, **kwargs)
+        codes = result.sequences if qwen else result
+        limit = kwargs["max_new_tokens"]
+        if codes.shape[-1] >= limit and not (codes[..., -1] == eos).all().item():
+            raise SpeechLimitError("The model exhausted its audio tokens before the end of the chunk.")
+        return result
+
+    setattr(module, method, checked)
+    try:
+        yield
+    finally:
+        setattr(module, method, original)
+
+
 def render(kind, model, data, state):
     import numpy as np
     import soundfile as sf
@@ -152,25 +175,20 @@ def render(kind, model, data, state):
                 limit = model.model.config.talker_config.max_position_embeddings
                 if prompt_tokens + s["max_new_tokens"] + 16 > limit:
                     raise ValueError(f"Delivery instruction, script chunk and reserved codec output exceed the {limit:,}-token model context. Shorten the instruction or lower the codec token limit.")
-            if kind == "qwen_base":
-                wavs, rate = model.generate_voice_clone(
-                    text=data["text"], language=s["language"], voice_clone_prompt=state["voice_clone_prompt"], **generation,
-                )
-            else:
-                wavs, rate = model.generate_custom_voice(
-                    text=data["text"], language=s["language"], speaker=s["speaker"],
-                    instruct=s["instruct"] or None, **generation,
-                )
+            talker = model.model.talker
+            with check_end_token(talker, "generate", talker.config.codec_eos_token_id, qwen=True):
+                if kind == "qwen_base":
+                    wavs, rate = model.generate_voice_clone(
+                        text=data["text"], language=s["language"], voice_clone_prompt=state["voice_clone_prompt"], **generation,
+                    )
+                else:
+                    wavs, rate = model.generate_custom_voice(
+                        text=data["text"], language=s["language"], speaker=s["speaker"],
+                        instruct=s["instruct"] or None, **generation,
+                    )
             wav = wavs[0]
         elif kind in HIGGS_MODELS:
             wav, rate = model.render(data["text"], reference_transcript(s), s)
-        elif kind == "chatterbox":
-            wav = model.generate(
-                data["text"], language_id=s["language"],
-                audio_prompt_path=data["reference"] if data["first"] else None,
-                **{key: s[key] for key in CHATTERBOX},
-            ).detach().cpu().float().numpy()
-            rate = model.sr
         elif kind == "index":
             mode = s["emo_mode"]
             vector = model.normalize_emo_vec(s["emo_vector"], apply_bias=True) if mode == "vector" else None
@@ -190,21 +208,30 @@ def render(kind, model, data, state):
                     additions[term] = {"en": reading, "zh": reading}
             normalizer.term_glossary = {**base_glossary, **additions}
             try:
-                rate, wav = model.infer(data["reference"], text, None, s["language"],
-                                        emo_audio_prompt=data["emotion"], emo_alpha=s["emo_alpha"], emo_vector=vector,
-                                        use_emo_text=mode == "text", emo_text=s["emo_text"] or None,
-                                        use_random=s["emo_random"], duration_factor=s["duration_factor"],
-                                        text_normalization=s["text_normalization"], interval_silence=s["segment_pause"],
-                                        max_text_tokens_per_segment=s["max_text_tokens"], do_sample=s["do_sample"], **options)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("error", message=r"WARN: generation stopped due to exceeding")
+                    rate, wav = model.infer(data["reference"], text, None, s["language"],
+                                            emo_audio_prompt=data["emotion"], emo_alpha=s["emo_alpha"], emo_vector=vector,
+                                            use_emo_text=mode == "text", emo_text=s["emo_text"] or None,
+                                            use_random=s["emo_random"], duration_factor=s["duration_factor"],
+                                            text_normalization=s["text_normalization"], interval_silence=s["segment_pause"],
+                                            max_text_tokens_per_segment=s["max_text_tokens"], do_sample=s["do_sample"], **options)
+            except UserWarning as exc:
+                if not str(exc).startswith("WARN: generation stopped due to exceeding `max_mel_tokens`"):
+                    raise
+                raise SpeechLimitError("IndexTTS exhausted its mel tokens before the end of the segment.") from exc
             finally:
                 normalizer.term_glossary = base_glossary
             wav = wav.astype(np.float32) / 32768
         else:
-            wav = model.generate(
-                data["text"], language_id=data["dialect"],
-                audio_prompt_path=data["reference"] if data["first"] else None,
-                **{k: s[k] for k in ARABIC},
-            ).detach().cpu().float().numpy()
+            language = s["language"] if kind == "chatterbox" else data["dialect"]
+            controls = CHATTERBOX if kind == "chatterbox" else ARABIC
+            with check_end_token(model.t3, "inference", model.t3.hp.stop_speech_token):
+                wav = model.generate(
+                    data["text"], language_id=language,
+                    audio_prompt_path=data["reference"] if data["first"] else None,
+                    **{key: s[key] for key in controls},
+                ).detach().cpu().float().numpy()
             rate = model.sr
     wav = np.asarray(wav, dtype=np.float32).reshape(-1)
     if not wav.size or not np.isfinite(wav).all():
@@ -249,6 +276,8 @@ def main():
             else:
                 result = render(kind, model, message, state)
             print(json.dumps({"ok": result}), file=protocol)
+        except SpeechLimitError as exc:
+            print(json.dumps({"speech_limit": str(exc)}), file=protocol)
         except torch.OutOfMemoryError:
             print(json.dumps({"error": "CUDA ran out of memory during generation. Try a shorter chunk or lower the audio token limit."}), file=protocol)
         except Exception as exc:
