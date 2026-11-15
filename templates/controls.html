@@ -1,0 +1,30 @@
+<div class="control-flow" data-model="{{ model }}">
+  {% if model == 'lahgtna' %}
+    <label>Dialect <select name="dialect" id="dialect">{% for k, v in dialects.items() %}<option value="{{ k }}"{% if config.dialect == k %} selected{% endif %}>{{ v[0] }}</option>{% endfor %}</select></label>
+    <label>Reference voice <select name="voice_id" id="voice-id"><option value="">Dialect reference</option>{% for voice in voices %}<option value="{{ voice.id }}"{% if config.voice_id == voice.id %} selected{% endif %}>{{ voice.name }}</option>{% endfor %}</select></label>
+    <audio id="reference-preview" controls preload="none" aria-label="Preview selected reference"{% if config.dialect != 'auto' %} src="{{ '/voices/' ~ config.voice_id ~ '/audio' if config.voice_id else '/references/' ~ config.dialect }}"{% else %} hidden{% endif %}></audio>
+    <div class="file-actions"><label class="button tonal import-label"><input class="sr-only" name="reference" id="reference" type="file" accept="audio/*,.webm" aria-label="Upload reference audio">Upload audio</label><button class="button outlined" id="record-reference" type="button">Record</button><button class="quiet" id="reset-reference" type="button" hidden>Reset</button></div>
+    <small id="reference-status" aria-live="polite">Optional. A clip overrides the selected voice for this job.</small>
+    {% if reused %}<small>The previous job’s custom clip is reused when no new reference is selected.</small>{% endif %}
+  {% else %}
+    <div class="field-grid">
+      <label>Language <select name="language">{% for language in languages %}<option{% if config.language == language %} selected{% endif %}>{{ language }}</option>{% endfor %}</select></label>
+      <label>Speaker <select name="speaker">{% for key, profile in speakers.items() %}<option value="{{ key }}"{% if key == config.speaker %} selected{% endif %}>{{ key }} · {{ profile }}</option>{% endfor %}</select></label>
+    </div>
+    <label>Delivery instruction <textarea name="instruct" rows="2" maxlength="600" placeholder="e.g. Calm, with clear pauses.">{{ config.instruct }}</textarea></label>
+  {% endif %}
+  <details class="disclosure"{% if reused %} open{% endif %}>
+    <summary>Advanced generation</summary>
+    <div class="field-grid control-numbers">
+      {% for key, item in controls(model).items() %}<label>{{ item.label }}<input type="number" name="{{ key }}" value="{{ config[key] }}" min="{{ item.minimum }}" max="{{ item.maximum }}" step="{{ item.step }}" required></label>{% endfor %}
+    </div>
+    {% if model == 'qwen' %}
+      {% for key, label in flags.items() %}<label class="check"><input type="checkbox" name="{{ key }}" value="1"{% if config[key] %} checked{% endif %}>{{ label }}</label>{% endfor %}
+    {% else %}<label class="check"><input type="checkbox" name="keep_tags" value="1"{% if config.keep_tags %} checked{% endif %}>Keep expression tags</label>{% endif %}
+  </details>
+  <details class="disclosure">
+    <summary>Audio export</summary>
+    <label>Format <select name="format">{% for key in ('wav','mp3','flac') %}<option value="{{ key }}"{% if config.format == key %} selected{% endif %}>{{ key|upper }}</option>{% endfor %}</select></label>
+    <label class="check"><input name="normalize" type="checkbox" value="1"{% if config.normalize %} checked{% endif %}>Normalize loudness to −16 LUFS</label>
+  </details>
+</div>

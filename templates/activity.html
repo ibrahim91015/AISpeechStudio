@@ -1,0 +1,6 @@
+<section class="activity" id="activity" aria-labelledby="activity-heading"
+         hx-get="/activity" hx-trigger="queueUpdated from:body, every 3s" hx-swap="outerHTML">
+  <div class="section-head"><h2 id="activity-heading">Activity</h2><span class="status-pill"><i class="status-dot{% if state.pending %} busy{% endif %}"></i>{% if not state.worker %}Worker starting{% elif state.pending %}{{ state.pending }} active or queued{% else %}GPU ready{% endif %}{% if state.loaded %} · {{ models[state.loaded] }} warm{% endif %}</span></div>
+  {% if jobs %}<div class="job-list">{% for job in jobs %}{% include 'job.html' %}{% endfor %}</div>
+  {% else %}<div class="empty">Your generated audio will appear here. You can queue another script while the worker is busy.</div>{% endif %}
+</section>

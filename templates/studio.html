@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+{% block body %}
+<div class="page-heading"><h1>Speech studio</h1><p>Write a script, choose a voice, and render your audio.</p></div>
+<form class="studio-grid" action="/jobs" method="post" enctype="multipart/form-data"
+      hx-post="/jobs" hx-encoding="multipart/form-data" hx-target="#notice" hx-disabled-elt="button[name=intent]" id="speech-form">
+  {% if reused %}<input type="hidden" name="reused" value="{{ reused.id }}">{% endif %}
+  <section class="surface script-panel" aria-labelledby="script-heading">
+    <div class="panel-head"><div><h2 id="script-heading">Script</h2><p>Paste text or import a .txt file.</p></div>
+      <label class="button tonal import-label"><input class="sr-only" type="file" id="import-text" accept="text/plain,.txt" aria-label="Import text file">Import text</label>
+    </div>
+    <label class="sr-only" for="script">Script text</label>
+    <textarea id="script" name="script" dir="auto" rows="12" maxlength="150000" placeholder="Enter the text you want to hear…" spellcheck="false">{{ text }}</textarea>
+    <div class="editor-bar"><span id="character-count" class="counter">{{ text|length }} characters</span><div class="editor-actions">
+      <button class="quiet" type="button" id="sample-text">Use sample</button>
+      <button class="quiet" type="button" id="clear-text">Clear</button>
+    </div></div>
+    <div class="marks" id="arabic-tools"{% if model != 'lahgtna' %} hidden{% endif %}>
+      <span>Arabic diacritics</span>
+      <div class="mark-controls">
+      {% for label, mark in tashkil.items() %}<button type="button" data-mark="{{ mark }}" aria-label="{{ label }}" title="{{ label }}">◌{{ mark }}</button>{% endfor %}
+      <button class="quiet remove-marks" id="remove-marks" type="button">Remove</button><button class="quiet" id="random-text" type="button">Random Egyptian example</button>
+      </div>
+    </div>
+    <div class="script-meta">
+      <label>Title <input name="title" maxlength="100" placeholder="Optional title" value="{{ reused.title if reused else '' }}"></label>
+      <label>Project <select name="project"><option value="">No project</option>{% for project in projects %}<option value="{{ project.id }}"{% if reused and reused.project_id == project.id %} selected{% endif %}>{{ project.name }}</option>{% endfor %}</select></label>
+    </div>
+    <div class="submit-row">
+      <button class="button primary" type="submit" name="intent" value="generate"><svg class="play-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 9 6-9 6z"/></svg>Generate audio</button>
+      <span class="inline-message" id="notice" aria-live="polite"></span>
+    </div>
+  </section>
+  <section class="surface settings-panel" aria-labelledby="settings-heading">
+    <div class="panel-head"><div><h2 id="settings-heading">Voice &amp; settings</h2><p>Choose the model and delivery.</p></div></div>
+    <label for="model">TTS model</label>
+    <select name="model" id="model" hx-get="/controls" hx-target="#fields" hx-swap="innerHTML">
+      {% for key, label in models.items() %}<option value="{{ key }}"{% if key == model %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <div id="fields">{% include 'controls.html' %}</div>
+    <details class="disclosure"><summary>Save these settings as a preset</summary><div class="preset-input"><label class="sr-only" for="preset-name">Preset name</label><input id="preset-name" name="preset_name" placeholder="Preset name" maxlength="100"><button class="button tonal" type="submit" name="intent" value="preset">Save</button></div></details>
+    {% if presets %}<label>Saved preset <select id="load-preset"><option value="">Choose a preset</option>{% for preset in presets %}<option value="{{ preset.id }}">{{ preset.name }}</option>{% endfor %}</select></label>{% endif %}
+  </section>
+</form>
+{% include 'activity.html' %}
+<script type="application/json" id="editor-catalog">{{ {'dialects': dialects, 'examples': egyptian_examples}|tojson }}</script>
+{% endblock %}

@@ -1,0 +1,13 @@
+transformers==4.46.3
+numpy==1.26.4
+librosa==0.10.0
+soundfile>=0.12,<1
+s3tokenizer==0.3.0
+diffusers==0.29.0
+omegaconf==2.3.0
+resemble-perth==1.0.1
+silero-vad==5.1.2
+conformer==0.3.2
+safetensors==0.5.3
+resampy==0.4.3
+einops>=0.8,<1

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#15131b">
+  <title>{% block title %}AI Speech Studio{% endblock %}</title>
+  <link rel="stylesheet" href="/static/studio.css">
+  <script defer src="/static/htmx.min.js"></script>
+  <script defer src="/static/studio.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <div class="top-inner">
+    <a class="brand" href="/">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 13v6m5-10v14m5-19v24m5-19v14m5-10v6"/></svg>
+      <span>AI Speech Studio</span>
+    </a>
+    <nav aria-label="Primary">
+      <a href="/"{% if page == 'studio' %} aria-current="page"{% endif %}>Studio</a>
+      <a href="/library"{% if page == 'library' %} aria-current="page"{% endif %}>Library</a>
+    </nav>
+    <a class="profile" href="/library#profiles" aria-label="Switch profile, current {{ profile.name }}"><span class="avatar">{{ profile.name[:1] }}</span><span>{{ profile.name }}</span></a>
+  </div>
+</header>
+<main class="main" id="main">{% block body %}{% endblock %}</main>
+</body>
+</html>
