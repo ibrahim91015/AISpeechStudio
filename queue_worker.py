@@ -9,6 +9,7 @@ import threading
 import time
 import wave
 import unicodedata
+from contextlib import ExitStack
 
 from storage import AISPEECH, DATA, JOBS, ROOT, connect, one
 
@@ -174,14 +175,15 @@ class Worker:
             settings["detected_dialect"] = prepared["dialect"]
             update(key, settings=json.dumps(settings))
         update(key, phase="Generating speech")
-        with wave.open(str(source), "wb") as output:
-            rate = None
+        with ExitStack() as files:
+            output = None
             for index, text in enumerate(chunks):
                 self.send(key, {"op": "render", "text": text, "output": str(part), "first": index == 0,
                                 "settings": settings, **prepared})
                 with wave.open(str(part), "rb") as audio:
-                    if rate is None:
+                    if output is None:
                         rate = audio.getframerate()
+                        output = files.enter_context(wave.open(str(source), "wb"))
                         output.setparams(audio.getparams())
                         silence = b"\0" * round(rate * settings["pause_ms"] / 1000) * audio.getsampwidth() * audio.getnchannels()
                     elif index:
