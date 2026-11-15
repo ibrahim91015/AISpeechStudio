@@ -8,7 +8,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -18,9 +18,9 @@ from starlette.datastructures import UploadFile
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
-from catalog import ARABIC_SAMPLES, BUILTIN_VOICES, DIALECTS, EMOTIONS, FLAGS, INDEX_ENGLISH_VOICES, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, REFERENCE_VOICES, SPEAKERS, TASHKIL, controls, defaults, settings_from
+from catalog import ARABIC_SAMPLES, DIALECTS, EMOTIONS, FLAGS, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, REFERENCE_VOICES, SPEAKERS, TASHKIL, controls, defaults, settings_from
 from catalog import CHATTERBOX_LANGUAGES, HIGGS_MODELS, REFERENCE_MODELS, REQUIRED_REFERENCE
-from demo_voices import CLIPS, transcript_for, voice_collections
+from demo_voices import CLIPS, COLLECTION_CLIPS, transcript_for, voice_collections
 from documents import IMPORT_EXTENSIONS, MAX_TEXT, import_document
 from queue_worker import Worker
 import shares
@@ -60,9 +60,8 @@ studio_js_version = hashlib.sha256((ROOT / "static/studio.js").read_bytes()).hex
 trusted_origins = {origin.strip().rstrip("/").lower()
                    for origin in os.getenv("TTS_TRUSTED_ORIGINS", "").split(",") if origin.strip()}
 templates.env.globals.update(models=MODELS, dialects=DIALECTS, languages=QWEN_LANGUAGES, speakers=SPEAKERS,
-                             flags=FLAGS, controls=controls, tashkil=TASHKIL, builtin_voices=BUILTIN_VOICES,
+                             flags=FLAGS, controls=controls, tashkil=TASHKIL,
                              index_languages=INDEX_LANGUAGES, chatterbox_languages=CHATTERBOX_LANGUAGES, higgs_models=HIGGS_MODELS,
-                             demo_collections=voice_collections, english_voices=INDEX_ENGLISH_VOICES,
                              emotions=EMOTIONS, arabic_samples=ARABIC_SAMPLES,
                              import_extensions=",".join(IMPORT_EXTENSIONS), max_text=MAX_TEXT,
                              studio_js_version=studio_js_version, studio_css_version=studio_css_version)
@@ -200,7 +199,7 @@ def studio(request: Request, model: str = "qwen", preset: int | None = None, reu
         config.update(emo_mode="audio", emo_voice=uploaded_emotion)
     return render(request, "studio.html", page="studio", model=model, config=config, reused=previous, previous_voice=previous_voice,
                   text=previous["script"] if previous else "", sample_voice=sample_voice,
-                  jobs=history(uid, limit=8), state=health_data(), **lookups(uid))
+                  jobs=history(uid, limit=8), state=health_data(), reference_collections=voice_collections(), **lookups(uid))
 
 
 @app.get("/controls", response_class=HTMLResponse)
@@ -209,7 +208,10 @@ def model_controls(request: Request, model: str = "qwen", reused: str = ""):
         raise HTTPException(404, "Model not found.")
     uid = current_user(request)["id"]
     previous_voice = f"previous:{reused}" if reused and reference_file(uid, f"previous:{reused}") else ""
-    return render(request, "controls.html", model=model, config=defaults(model), previous_voice=previous_voice, **lookups(uid))
+    response = render(request, "controls.html", model=model, config=defaults(model), previous_voice=previous_voice,
+                      reference_collections=voice_collections(), **lookups(uid))
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @app.get("/system-stats")
@@ -233,10 +235,48 @@ def library(request: Request, project: str = ""):
 
 
 @app.get("/voices", response_class=HTMLResponse)
-def voices_library(request: Request, uploaded: int = 0, skipped: int = 0):
+def voices_library(request: Request, uploaded: int = 0, skipped: int = 0, group: str = ""):
     voices = rows("SELECT * FROM voices WHERE user_id=? ORDER BY name COLLATE NOCASE, created DESC",
                   (current_user(request)["id"],))
-    return render(request, "voices.html", page="voices", voices=voices, uploaded=uploaded, skipped=skipped)
+    return render(request, "voices.html", page="voices", voices=voices, uploaded=uploaded, skipped=skipped,
+                  reference_collections=voice_collections(), open_group=group)
+
+
+def reference_collection_redirect(group, clip_key=None):
+    anchor = f"reference-clip-{quote(clip_key, safe='')}" if clip_key else f"reference-collection-{group}"
+    return RedirectResponse(f"/voices?group={group}#{anchor}", 303)
+
+
+@app.post("/reference-collections/{group}/rename")
+async def rename_reference_clip(request: Request, group: str):
+    async with request.form(max_files=0, max_fields=2) as form:
+        key = form.get("clip_key", "")
+        if not any(clip["key"] == key for clip in COLLECTION_CLIPS.get(group, ())):
+            raise HTTPException(404, "Reference recording not found.")
+        try:
+            name = name_from(form)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        with connect() as db:
+            db.execute("INSERT INTO reference_clip_names(clip_key,name) VALUES (?,?) "
+                       "ON CONFLICT(clip_key) DO UPDATE SET name=excluded.name", (key, name))
+    return reference_collection_redirect(group, key)
+
+
+@app.post("/reference-collections/{group}/visibility")
+async def set_reference_collection_visibility(request: Request, group: str):
+    if len(COLLECTION_CLIPS.get(group, ())) <= 3:
+        raise HTTPException(404, "This reference collection has no visibility setting.")
+    async with request.form(max_files=0, max_fields=1) as form:
+        visible = form.get("visible")
+        if visible not in {"0", "1"}:
+            raise HTTPException(400, "Choose whether to show this collection.")
+        with connect() as db:
+            if visible == "1":
+                db.execute("DELETE FROM hidden_reference_collections WHERE collection_key=?", (group,))
+            else:
+                db.execute("INSERT OR IGNORE INTO hidden_reference_collections(collection_key) VALUES (?)", (group,))
+    return reference_collection_redirect(group)
 
 
 @app.post("/import-text")

@@ -1,20 +1,20 @@
-"""Shared, read-only recordings published as model demo references."""
+"""Shared reference recordings and site-wide display settings."""
 
 import json
 from pathlib import Path
 
 from catalog import BUILTIN_VOICES, INDEX_ENGLISH_VOICES, REFERENCE_TRANSCRIPTS
-from storage import REFERENCES
+from storage import REFERENCES, connect
 
 
 COLLECTIONS = {
+    "english": ("American English reference library", "https://github.com/rhasspy/piper/blob/master/VOICES.md"),
     "qwen_base": ("Qwen3-TTS", "https://github.com/QwenLM/Qwen3-TTS/tree/main/examples"),
-    "higgs_q8": ("Higgs Audio", "https://sgl-project.github.io/sglang-omni/cookbook/higgs_tts.html"),
-    "chatterbox": ("Chatterbox Multilingual V3", "https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS-V3"),
     "lahgtna": ("Lahgtna Chatterbox", "https://huggingface.co/spaces/oddadmix/lahgtna-chatterbox-demo"),
+    "chatterbox": ("Chatterbox Multilingual V3", "https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS-V3"),
+    "higgs_q8": ("Higgs Audio", "https://sgl-project.github.io/sglang-omni/cookbook/higgs_tts.html"),
     "index": ("IndexTTS 2.5", "https://huggingface.co/spaces/IndexTeam/IndexTTS-2.5-Demo"),
     "vctk": ("Edinburgh VCTK English accents", "https://datashare.ed.ac.uk/handle/10283/3443"),
-    "english": ("American English reference library", "https://github.com/rhasspy/piper/blob/master/VOICES.md"),
 }
 
 
@@ -45,17 +45,29 @@ def original_clips(voices, language):
                    "audio_url": f"/references/{key}", "source": COLLECTIONS["lahgtna"][1] if language == "Arabic" else None}
 
 
-def voice_collections(with_originals=False, preferred=None):
+def clips_by_collection():
     groups = {key: [] for key in COLLECTIONS}
     for clip in CLIPS.values():
         groups[clip["model"]].append(clip)
-    if with_originals:
-        groups["lahgtna"] = list(original_clips(BUILTIN_VOICES, "Arabic"))
-        groups["english"] = list(original_clips(INDEX_ENGLISH_VOICES, "English · United States"))
-    preferred = "higgs_q8" if preferred == "higgs_bf16" else preferred
-    return [dict(key=key, label=COLLECTIONS[key][0], source=COLLECTIONS[key][1],
-                 studio_model="index" if key in {"english", "vctk"} else key, clips=groups[key])
-            for key in sorted(groups, key=lambda key: key != preferred) if groups[key]]
+    groups["lahgtna"].extend(original_clips(BUILTIN_VOICES, "Arabic"))
+    groups["english"].extend(original_clips(INDEX_ENGLISH_VOICES, "English · United States"))
+    return groups
+
+
+COLLECTION_CLIPS = clips_by_collection()
+
+
+def voice_collections():
+    with connect() as db:
+        names = dict(db.execute("SELECT clip_key,name FROM reference_clip_names").fetchall())
+        hidden = {row[0] for row in db.execute("SELECT collection_key FROM hidden_reference_collections")}
+    return [
+        dict(key=key, label=label, source=source, visible=key not in hidden,
+             dropdown_label="American English reference voices" if key == "english" else f"{label} reference clips",
+             studio_model="index" if key in {"english", "vctk"} else key,
+             clips=[{**clip, "name": names.get(clip["key"], clip["name"])} for clip in COLLECTION_CLIPS[key]])
+        for key, (label, source) in COLLECTIONS.items() if COLLECTION_CLIPS[key]
+    ]
 
 
 def transcript_for(voice_key):

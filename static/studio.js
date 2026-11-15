@@ -155,8 +155,9 @@ function previewReference() {
   const dialect = document.querySelector('#dialect');
   const reference = document.querySelector('#voice-id');
   if (dialect && reference) {
+    const label = [...reference.options].find(option => !option.hidden && option.value === 'dialect:' + dialect.value);
     reference.options[0].textContent = dialect.value === 'auto' ? 'Dialect reference · Auto-detect' :
-      'Dialect reference · ' + dialect.selectedOptions[0].textContent;
+      (label ? 'Dialect reference · ' + label.textContent : 'Dialect reference');
   }
   for (const [selector, player] of [['#voice-id', '#reference-preview'], ['#emotion-voice', '#emotion-preview']]) {
     const select = document.querySelector(selector);

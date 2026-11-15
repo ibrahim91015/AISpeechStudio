@@ -20,6 +20,12 @@ CREATE TABLE IF NOT EXISTS voices (
     id TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), name TEXT NOT NULL,
     created TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS reference_clip_names (
+    clip_key TEXT PRIMARY KEY, name TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS hidden_reference_collections (
+    collection_key TEXT PRIMARY KEY
+);
 CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), name TEXT NOT NULL,
     created TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, name)

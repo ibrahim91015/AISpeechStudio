@@ -2,9 +2,13 @@ from dataclasses import dataclass
 
 
 MODELS = {
-    "qwen": "Qwen3-TTS CustomVoice", "lahgtna": "Lahgtna Chatterbox (Arabic)", "index": "IndexTTS 2.5",
-    "qwen_base": "Qwen3-TTS 12Hz 1.7B Base", "higgs_bf16": "Higgs TTS 3 4B (BF16)",
-    "higgs_q8": "Higgs TTS 3 4B (Q8)", "chatterbox": "Chatterbox Multilingual V3",
+    "qwen": "Qwen3-TTS CustomVoice",
+    "qwen_base": "Qwen3-TTS 12Hz 1.7B Base",
+    "lahgtna": "Lahgtna Chatterbox (Arabic)",
+    "chatterbox": "Chatterbox Multilingual V3",
+    "higgs_q8": "Higgs TTS 3 4B (Q8)",
+    "higgs_bf16": "Higgs TTS 3 4B (BF16)",
+    "index": "IndexTTS 2.5",
 }
 HIGGS_MODELS = {"higgs_bf16", "higgs_q8"}
 REFERENCE_MODELS = set(MODELS) - {"qwen"}
