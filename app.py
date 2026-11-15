@@ -362,7 +362,9 @@ async def set_reference_collection_visibility(request: Request, group: str):
                 db.execute("DELETE FROM hidden_reference_collections WHERE collection_key=?", (group,))
             else:
                 db.execute("INSERT OR IGNORE INTO hidden_reference_collections(collection_key) VALUES (?)", (group,))
-    return reference_collection_redirect(group)
+    if "application/json" in request.headers.get("accept", ""):
+        return {"visible": visible == "1"}
+    return RedirectResponse("/voices", 303)
 
 
 @app.post("/import-text")

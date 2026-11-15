@@ -346,6 +346,46 @@ document.addEventListener('change', (event) => {
   }
 });
 
+
+document.querySelector('.reference-collections')?.addEventListener('submit', async event => {
+  const form = event.target;
+  if (!form.matches('.reference-visibility')) return;
+  event.preventDefault();
+  if (form.getAttribute('aria-busy') === 'true') return;
+
+  const button = form.querySelector('.reference-eye');
+  const error = document.querySelector('#reference-visibility-error');
+  const wasVisible = button.getAttribute('aria-pressed') === 'true';
+  const setVisible = visible => {
+    button.setAttribute('aria-pressed', String(visible));
+    button.value = visible ? '0' : '1';
+    button.title = visible ? 'Hide from Studio' : 'Show in Studio';
+    button.querySelector('[data-eye-open]').toggleAttribute('hidden', !visible);
+    button.querySelector('[data-eye-closed]').toggleAttribute('hidden', visible);
+  };
+
+  form.setAttribute('aria-busy', 'true');
+  error.hidden = true;
+  setVisible(!wasVisible);
+  try {
+    const response = await fetch(form.action, {
+      method: 'POST',
+      headers: {Accept: 'application/json'},
+      body: new URLSearchParams({visible: wasVisible ? '0' : '1'}),
+    });
+    if (!response.ok) throw new Error('Visibility update failed');
+    const {visible} = await response.json();
+    if (typeof visible !== 'boolean') throw new Error('Missing visibility state');
+    setVisible(visible);
+  } catch {
+    setVisible(wasVisible);
+    error.textContent = 'Could not save reference visibility. Try again.';
+    error.hidden = false;
+  } finally {
+    form.removeAttribute('aria-busy');
+  }
+});
+
 const libraryFile = document.querySelector('#voice-files');
 if (libraryFile) {
   const name = document.querySelector('#new-voice-name');

@@ -52,6 +52,7 @@
 <section class="reference-collections" aria-labelledby="official-references">
   <div class="section-head"><h2 id="official-references">Reference collections</h2></div>
   <p class="reference-settings-note">Names and Studio visibility are shared across profiles.</p>
+  <p class="notice-error" id="reference-visibility-error" role="alert" hidden></p>
   {% for collection in reference_collections %}
     <div class="surface reference-collection{% if collection.clips|length > 3 %} has-visibility{% endif %}" id="reference-collection-{{ collection.key }}">
       <details{% if open_group == collection.key %} open{% endif %}>
@@ -87,11 +88,10 @@
                   aria-label="Show {{ collection.label }} in Studio" aria-pressed="{{ 'true' if collection.visible else 'false' }}"
                   title="{{ 'Hide from Studio' if collection.visible else 'Show in Studio' }}">
             <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              {% if collection.visible %}
+              <g data-eye-open{% if not collection.visible %} hidden{% endif %}>
                 <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="2.6"/>
-              {% else %}
-                <path d="m3 3 18 18M10.2 6.2c.6-.1 1.2-.2 1.8-.2 6.4 0 10 6 10 6a15 15 0 0 1-3 3.4M6 7.8A16 16 0 0 0 2 12s3.6 6 10 6a11 11 0 0 0 3.7-.7"/>
-              {% endif %}
+              </g>
+              <path data-eye-closed{% if collection.visible %} hidden{% endif %} d="m3 3 18 18M10.2 6.2c.6-.1 1.2-.2 1.8-.2 6.4 0 10 6 10 6a15 15 0 0 1-3 3.4M6 7.8A16 16 0 0 0 2 12s3.6 6 10 6a11 11 0 0 0 3.7-.7"/>
             </svg>
           </button>
         </form>
