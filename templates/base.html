@@ -20,6 +20,7 @@
     </a>
     <nav aria-label="Primary">
       <a href="/"{% if page == 'studio' %} aria-current="page"{% endif %}>Studio</a>
+      <a href="/voices"{% if page == 'voices' %} aria-current="page"{% endif %}>Voices</a>
       <a href="/library"{% if page == 'library' %} aria-current="page"{% endif %}>Library</a>
     </nav>
     <a class="profile" href="/library#profiles" aria-label="Switch profile, current {{ profile.name }}"><span class="avatar">{{ profile.name[:1] }}</span><span>{{ profile.name }}</span></a>

@@ -2,9 +2,10 @@
   {% if model == 'lahgtna' %}
     <label>Dialect <select name="dialect" id="dialect">{% for k, v in dialects.items() %}<option value="{{ k }}"{% if config.dialect == k %} selected{% endif %}>{{ v[0] }}</option>{% endfor %}</select></label>
     <label>Reference voice <select name="voice_id" id="voice-id"><option value="">Dialect reference</option>{% for voice in voices %}<option value="{{ voice.id }}"{% if config.voice_id == voice.id %} selected{% endif %}>{{ voice.name }}</option>{% endfor %}</select></label>
-    <audio id="reference-preview" controls preload="none" aria-label="Preview selected reference"{% if config.dialect != 'auto' %} src="{{ '/voices/' ~ config.voice_id ~ '/audio' if config.voice_id else '/references/' ~ config.dialect }}"{% else %} hidden{% endif %}></audio>
+    <audio id="reference-preview" controls preload="none" aria-label="Preview selected reference"{% if config.voice_id %} src="/voices/{{ config.voice_id }}/audio?reference=true"{% elif config.dialect != 'auto' %} src="/references/{{ config.dialect }}"{% else %} hidden{% endif %}></audio>
     <div class="file-actions"><label class="button tonal import-label"><input class="sr-only" name="reference" id="reference" type="file" accept="audio/*,.webm" aria-label="Upload reference audio">Upload audio</label><button class="button outlined" id="record-reference" type="button">Record</button><button class="quiet" id="reset-reference" type="button" hidden>Reset</button></div>
-    <small id="reference-status" aria-live="polite">Optional. A clip overrides the selected voice for this job.</small>
+    <small>Uploaded clips are saved to <a href="/voices">Voices</a>.</small>
+    <small id="reference-status" aria-live="polite" hidden></small>
     {% if reused %}<small>The previous job’s custom clip is reused when no new reference is selected.</small>{% endif %}
   {% else %}
     <div class="field-grid">

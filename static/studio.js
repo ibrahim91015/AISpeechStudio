@@ -1,6 +1,7 @@
 const editor = document.querySelector('#script');
 let previewUrl = '';
 let recorder = null;
+let importing = false;
 
 function refreshCount() {
   if (editor) document.querySelector('#character-count').textContent = `${editor.value.length.toLocaleString()} characters`;
@@ -12,6 +13,73 @@ function replaceText(value) {
   editor.focus();
 }
 
+function showProgress(panel, label, percent) {
+  panel.hidden = false;
+  const [message, number] = panel.querySelectorAll('span');
+  const bar = panel.querySelector('progress');
+  if (message.textContent !== label) message.textContent = label;
+  number.textContent = percent === null ? '' : percent + '%';
+  if (percent === null) bar.removeAttribute('value');
+  else bar.value = percent;
+}
+
+function requestImport(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const form = new FormData();
+    form.append('document', file);
+    xhr.open('POST', '/import-text');
+    xhr.responseType = 'json';
+    xhr.upload.onprogress = (event) => onProgress(event.lengthComputable ? event.loaded / event.total : null);
+    xhr.upload.onload = () => onProgress(1);
+    xhr.onload = () => {
+      if (xhr.status === 200 && xhr.response) resolve(xhr.response.text);
+      else reject(new Error(file.name + ': ' + (xhr.response?.detail || 'Import failed.')));
+    };
+    xhr.onerror = () => reject(new Error('Connection lost during document import.'));
+    xhr.send(form);
+  });
+}
+
+async function importFiles(files) {
+  if (!files.length || importing) return;
+  const status = document.querySelector('#import-status');
+  const progress = document.querySelector('#import-progress');
+  const initial = editor.value;
+  const texts = [];
+  const total = files.reduce((sum, file) => sum + file.size, 0);
+  let uploaded = 0;
+  let length = 0;
+  importing = true;
+  status.hidden = true;
+  status.className = 'inline-message';
+  showProgress(progress, 'Uploading documents', 0);
+  try {
+    for (const file of files) {
+      if (file.size > 12 * 1024 * 1024) throw new Error(file.name + ' exceeds 12 MB.');
+      const text = await requestImport(file, (fraction) => {
+        const percent = fraction === null || !total ? null : Math.floor(100 * (uploaded + fraction * file.size) / total);
+        showProgress(progress, fraction === 1 ? 'Reading ' + file.name : 'Uploading documents', percent);
+      });
+      uploaded += file.size;
+      length += text.length + (texts.length ? 2 : 0);
+      if (length > editor.maxLength) throw new Error('The combined text exceeds 150,000 characters.');
+      texts.push(text);
+    }
+    if (editor.value !== initial) throw new Error('The script changed during import. Drop the files again to replace it.');
+    replaceText(texts.join('\n\n'));
+    status.classList.add('notice-ok');
+    status.textContent = files.length === 1 ? 'Imported ' + files[0].name + '.' : 'Imported ' + files.length + ' files.';
+  } catch (error) {
+    status.classList.add('notice-error');
+    status.textContent = error.message;
+  } finally {
+    progress.hidden = true;
+    status.hidden = false;
+    importing = false;
+  }
+}
+
 function previewReference() {
   const clip = document.querySelector('#reference');
   const audio = document.querySelector('#reference-preview');
@@ -21,16 +89,19 @@ function previewReference() {
   const file = clip.files[0];
   if (previewUrl) URL.revokeObjectURL(previewUrl);
   previewUrl = file ? URL.createObjectURL(file) : '';
-  const src = previewUrl || (voice ? `/voices/${voice}/audio` : dialect !== 'auto' ? `/references/${dialect}` : '');
+  const src = previewUrl || (voice ? `/voices/${voice}/audio?reference=true` : dialect !== 'auto' ? `/references/${dialect}` : '');
   audio.hidden = !src;
   if (src) audio.src = src;
   else audio.removeAttribute('src');
   document.querySelector('#reset-reference').hidden = !file;
-  document.querySelector('#reference-status').textContent = file ? file.name : 'Optional. A clip overrides the selected voice for this job.';
+  const status = document.querySelector('#reference-status');
+  status.textContent = file ? file.name : '';
+  status.hidden = !file;
 }
 
 async function record(button) {
   const status = document.querySelector('#reference-status');
+  status.hidden = false;
   if (recorder?.state === 'recording') {
     recorder.stop();
     return;
@@ -67,6 +138,19 @@ async function record(button) {
 
 if (editor) {
   editor.addEventListener('input', refreshCount);
+  editor.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    editor.classList.add('drop-target');
+  });
+  editor.addEventListener('dragleave', () => editor.classList.remove('drop-target'));
+  editor.addEventListener('drop', (event) => {
+    editor.classList.remove('drop-target');
+    if (!event.dataTransfer.files.length) return;
+    event.preventDefault();
+    importFiles([...event.dataTransfer.files]);
+  });
   const mobileLayout = matchMedia('(max-width: 740px)');
   const submitRow = document.querySelector('.submit-row');
   const orderSubmit = () => {
@@ -76,18 +160,47 @@ if (editor) {
   mobileLayout.addEventListener('change', orderSubmit);
 }
 
-document.addEventListener('change', async (event) => {
+document.addEventListener('change', (event) => {
   const el = event.target;
   if (el.hasAttribute('data-autosubmit')) el.form.submit();
   if (el.id === 'load-preset' && el.value) location.assign(`/?preset=${encodeURIComponent(el.value)}`);
   if (['dialect', 'voice-id', 'reference'].includes(el.id)) previewReference();
   if (el.id === 'import-text' && el.files[0]) {
-    const text = await el.files[0].text();
-    if (text.length > editor.maxLength) {
-      document.querySelector('#notice').textContent = 'The file exceeds 150,000 characters.';
-    } else replaceText(text);
+    importFiles([...el.files]);
     el.value = '';
   }
+});
+
+document.addEventListener('voiceSaved', (event) => {
+  const select = document.querySelector('#voice-id');
+  const file = document.querySelector('#reference');
+  if (!select || !file) return;
+  const { id, name } = event.detail;
+  select.add(new Option(name, id, false, true));
+  file.value = '';
+  previewReference();
+});
+
+document.addEventListener('submit', (event) => {
+  const message = event.target.dataset.confirm;
+  if (message && !window.confirm(message)) event.preventDefault();
+});
+
+document.addEventListener('htmx:beforeRequest', (event) => {
+  const form = event.detail.elt;
+  const panel = document.getElementById(form.dataset.uploadProgress);
+  if (!panel) return;
+  const voice = panel.id === 'voice-upload-progress';
+  const uploading = voice ? 'Uploading audio clip' : 'Uploading script and reference';
+  const processing = voice ? 'Saving voice clip' : 'Processing submission';
+  const xhr = event.detail.xhr;
+  showProgress(panel, uploading, 0);
+  xhr.upload.addEventListener('progress', (progress) => {
+    const percent = progress.lengthComputable ? Math.floor(100 * progress.loaded / progress.total) : null;
+    showProgress(panel, uploading, percent);
+  });
+  xhr.upload.addEventListener('load', () => showProgress(panel, processing, 100));
+  xhr.addEventListener('loadend', () => { panel.hidden = true; });
 });
 
 document.addEventListener('pointerdown', (event) => {
@@ -128,6 +241,7 @@ document.addEventListener('htmx:beforeSwap', (event) => {
   if (!list || !nextList) return;
   event.detail.shouldSwap = false;
   target.querySelector('.status-pill').replaceWith(next.querySelector('.status-pill'));
+  target.querySelector('#gpu-progress').replaceWith(next.querySelector('#gpu-progress'));
   const existing = new Map([...list.children].map((row) => [row.dataset.job, row]));
   for (const row of [...nextList.children].reverse()) {
     const old = existing.get(row.dataset.job);
@@ -139,12 +253,9 @@ document.addEventListener('htmx:beforeSwap', (event) => {
       old.replaceWith(row);
       htmx.process(row);
     } else if (old.contains(document.activeElement)) {
-      const label = old.querySelector('.job-progress span');
-      const nextLabel = row.querySelector('.job-progress span');
-      const progress = old.querySelector('progress');
-      const nextProgress = row.querySelector('progress');
-      if (label && nextLabel) label.textContent = nextLabel.textContent;
-      if (progress && nextProgress) progress.value = nextProgress.value;
+      const current = old.querySelector('.job-progress');
+      const replacement = row.querySelector('.job-progress');
+      if (current && replacement && current.innerHTML !== replacement.innerHTML) current.replaceWith(replacement);
     }
   }
   for (const row of existing.values()) {

@@ -2,14 +2,16 @@
 {% block body %}
 <div class="page-heading"><h1>Speech studio</h1><p>Write a script, choose a voice, and render your audio.</p></div>
 <form class="studio-grid" action="/jobs" method="post" enctype="multipart/form-data"
-      hx-post="/jobs" hx-encoding="multipart/form-data" hx-target="#notice" hx-disabled-elt="button[name=intent]" id="speech-form">
+      hx-post="/jobs" hx-encoding="multipart/form-data" hx-target="#notice" hx-disabled-elt="find button[value=generate], find button[value=preset]" id="speech-form" data-upload-progress="submission-progress">
   {% if reused %}<input type="hidden" name="reused" value="{{ reused.id }}">{% endif %}
   <section class="surface script-panel" aria-labelledby="script-heading">
-    <div class="panel-head"><div><h2 id="script-heading">Script</h2><p>Paste text or import a .txt file.</p></div>
-      <label class="button tonal import-label"><input class="sr-only" type="file" id="import-text" accept="text/plain,.txt" aria-label="Import text file">Import text</label>
+    <div class="panel-head"><div><h2 id="script-heading">Script</h2><p id="import-help">Drop TXT, Markdown, Word, PDF, or other text files into the editor.</p></div>
+      <label class="button tonal import-label"><input class="sr-only" type="file" id="import-text" accept="{{ import_extensions }}" aria-label="Import text or document files" multiple>Import text</label>
     </div>
     <label class="sr-only" for="script">Script text</label>
-    <textarea id="script" name="script" dir="auto" rows="12" maxlength="150000" placeholder="Enter the text you want to hear…" spellcheck="false">{{ text }}</textarea>
+    <textarea id="script" name="script" dir="auto" rows="12" maxlength="{{ max_text }}" placeholder="Enter the text you want to hear…" spellcheck="false" aria-describedby="import-help import-status">{{ text }}</textarea>
+    <p id="import-status" aria-live="polite" class="inline-message" hidden></p>
+    {% with upload_id='import-progress', upload_label='Uploading documents' %}{% include 'upload_progress.html' %}{% endwith %}
     <div class="editor-bar"><span id="character-count" class="counter">{{ text|length }} characters</span><div class="editor-actions">
       <button class="quiet" type="button" id="sample-text">Use sample</button>
       <button class="quiet" type="button" id="clear-text">Clear</button>
@@ -39,6 +41,7 @@
   <div class="submit-row">
     <button class="button primary" type="submit" name="intent" value="generate"><svg class="play-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 9 6-9 6z"/></svg>Generate audio</button>
     <span class="inline-message" id="notice" aria-live="polite"></span>
+    {% with upload_id='submission-progress', upload_label='Uploading script and reference' %}{% include 'upload_progress.html' %}{% endwith %}
   </div>
 </form>
 {% include 'activity.html' %}

@@ -1,7 +1,6 @@
 import json
 import shutil
 import sqlite3
-import subprocess
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -15,8 +14,10 @@ from starlette.datastructures import UploadFile
 from starlette.concurrency import run_in_threadpool
 
 from catalog import DIALECTS, EGYPTIAN_EXAMPLES, FLAGS, MODELS, QWEN_LANGUAGES, SPEAKERS, TASHKIL, controls, defaults, settings_from
+from documents import IMPORT_EXTENSIONS, MAX_TEXT, import_document
 from queue_worker import Worker
 from storage import JOBS, REFERENCES, ROOT, VOICES, connect, one, rows, setup
+from voice_media import store_voice
 
 
 @asynccontextmanager
@@ -32,7 +33,8 @@ app = FastAPI(title="AI Speech Studio", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 templates = Jinja2Templates(directory=ROOT / "templates")
 templates.env.globals.update(models=MODELS, dialects=DIALECTS, languages=QWEN_LANGUAGES, speakers=SPEAKERS,
-                             flags=FLAGS, controls=controls, tashkil=TASHKIL, egyptian_examples=EGYPTIAN_EXAMPLES)
+                             flags=FLAGS, controls=controls, tashkil=TASHKIL, egyptian_examples=EGYPTIAN_EXAMPLES,
+                             import_extensions=",".join(IMPORT_EXTENSIONS), max_text=MAX_TEXT)
 
 
 @app.middleware("http")
@@ -74,7 +76,8 @@ def health_data():
     state = one("SELECT * FROM worker_state WHERE singleton=1")
     worker = bool(state and time.time() - state["last_seen"] < 10)
     count = one("SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued','running')")["n"]
-    return {"worker": worker, "loaded": state.get("model") if worker else None, "pending": count}
+    return {"worker": worker, "loaded": state["model"] if worker else None, "pending": count,
+            "lifecycle": {key: state[key] for key in ("phase", "step", "total", "target")} if worker else {}}
 
 
 def job_for(uid, key):
@@ -90,23 +93,25 @@ def health():
 
 
 @app.get("/", response_class=HTMLResponse)
-def studio(request: Request, model: str = "lahgtna", preset: int | None = None, reuse: str | None = None):
+def studio(request: Request, model: str = "qwen", preset: int | None = None, reuse: str | None = None):
     uid = current_user(request)["id"]
     saved = one("SELECT * FROM presets WHERE id=? AND user_id=?", (preset, uid)) if preset else None
     previous = job_for(uid, reuse) if reuse else None
     source = previous or saved
     model = source["model"] if source else model
     if model not in MODELS:
-        model = "lahgtna"
+        model = "qwen"
     config = defaults(model)
     if source:
         config.update(json.loads(source["settings"]))
+    if config.get("voice_id") and not one("SELECT id FROM voices WHERE id=? AND user_id=?", (config["voice_id"], uid)):
+        config["voice_id"] = ""
     return render(request, "studio.html", page="studio", model=model, config=config, reused=previous,
                   text=previous["script"] if previous else "", jobs=history(uid, limit=8), state=health_data(), **lookups(uid))
 
 
 @app.get("/controls", response_class=HTMLResponse)
-def model_controls(request: Request, model: str = "lahgtna"):
+def model_controls(request: Request, model: str = "qwen"):
     if model not in MODELS:
         raise HTTPException(404, "Model not found.")
     return render(request, "controls.html", model=model, config=defaults(model), **lookups(current_user(request)["id"]))
@@ -124,6 +129,26 @@ def library(request: Request, project: int | None = None):
                   profiles=rows("SELECT * FROM users ORDER BY name"), **lookups(uid))
 
 
+@app.get("/voices", response_class=HTMLResponse)
+def voices_library(request: Request):
+    voices = rows("SELECT * FROM voices WHERE user_id=? ORDER BY name COLLATE NOCASE, created DESC",
+                  (current_user(request)["id"],))
+    return render(request, "voices.html", page="voices", voices=voices)
+
+
+@app.post("/import-text")
+async def extract_text(request: Request):
+    async with request.form(max_files=1, max_fields=0) as form:
+        upload = form.get("document")
+        if not isinstance(upload, UploadFile) or not upload.filename:
+            raise HTTPException(400, "Choose a text or document file.")
+        try:
+            text = await run_in_threadpool(import_document, upload)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    return {"text": text}
+
+
 @app.get("/references/{dialect}")
 def reference_audio(dialect: str):
     config = DIALECTS.get(dialect)
@@ -133,10 +158,21 @@ def reference_audio(dialect: str):
 
 
 @app.get("/voices/{key}/audio")
-def voice_audio(request: Request, key: str):
-    if not one("SELECT id FROM voices WHERE id=? AND user_id=?", (key, current_user(request)["id"])):
+def voice_audio(request: Request, key: str, download: bool = False, reference: bool = False):
+    voice = one("SELECT * FROM voices WHERE id=? AND user_id=?", (key, current_user(request)["id"]))
+    if not voice:
         raise HTTPException(404, "Voice not found.")
-    return FileResponse(VOICES / f"{key}.wav", media_type="audio/wav")
+    headers = {"X-Content-Type-Options": "nosniff"}
+    original = VOICES / f"{key}.source"
+    if not reference and original.is_file():
+        if download:
+            return FileResponse(original, media_type="application/octet-stream",
+                                filename=voice["original_name"], headers=headers)
+        if voice["media_type"]:
+            return FileResponse(original, media_type=voice["media_type"], headers=headers)
+        return FileResponse(VOICES / f"{key}.mp3", media_type="audio/mpeg", headers=headers)
+    return FileResponse(VOICES / f"{key}.wav", media_type="audio/wav",
+                        filename=f"{voice['name']}.wav" if download else None, headers=headers)
 
 
 @app.get("/jobs/{key}/audio")
@@ -147,24 +183,6 @@ def job_audio(request: Request, key: str, download: bool = False):
     if job["status"] != "finished" or not path.is_file():
         raise HTTPException(404, "Audio is not available yet.")
     return FileResponse(path, filename=f"{job['title']}.{extension}" if download else None)
-
-
-def normalize_reference(upload, dest):
-    if not upload.size or upload.size > 24 * 1024 * 1024:
-        raise ValueError("Upload a reference clip under 24 MB.")
-    raw = dest.with_suffix(".upload")
-    try:
-        with raw.open("wb") as file:
-            shutil.copyfileobj(upload.file, file)
-        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(raw), "-map", "0:a:0",
-                        "-t", "30", "-ac", "1", "-ar", "24000", str(dest)],
-                       check=True, timeout=30, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if dest.stat().st_size < 4800:
-            raise ValueError("Choose a longer reference clip.")
-    except (subprocess.SubprocessError, OSError):
-        raise ValueError("This audio could not be decoded. Try WAV, MP3, FLAC, or WebM.") from None
-    finally:
-        raw.unlink(missing_ok=True)
 
 
 def submit_error(request, message):
@@ -180,6 +198,15 @@ def name_from(form, key="name", default=""):
     return name
 
 
+def notify_voice(response, voice, queue=False):
+    events = {"queueUpdated": True} if queue else {}
+    if voice:
+        events["voiceSaved"] = {"id": voice["id"], "name": voice["name"]}
+    if events:
+        response.headers["HX-Trigger"] = json.dumps(events)
+    return response
+
+
 @app.post("/jobs")
 async def create_job(request: Request):
     uid = current_user(request)["id"]
@@ -189,6 +216,7 @@ async def create_job(request: Request):
             return submit_error(request, "Choose a TTS model.")
         key = uuid.uuid4().hex
         folder = JOBS / key
+        saved_voice = None
         try:
             config = settings_from(form, model)
             project = form.get("project") or None
@@ -197,24 +225,30 @@ async def create_job(request: Request):
             selected_voice = config.get("voice_id")
             if selected_voice and not one("SELECT id FROM voices WHERE id=? AND user_id=?", (selected_voice, uid)):
                 raise ValueError("Choose a reference voice from your library.")
-            if form.get("intent") == "preset":
+            is_preset = form.get("intent") == "preset"
+            reference = form.get("reference")
+            if is_preset:
                 title = name_from(form, "preset_name")
+            else:
+                text = form.get("script", "").strip()
+                if not text or len(text) > MAX_TEXT:
+                    raise ValueError("Enter between 1 and 150,000 characters of text.")
+                title = name_from(form, "title", " ".join(text.split())[:60])
+            if model == "lahgtna" and isinstance(reference, UploadFile) and reference.filename:
+                selected_voice = await run_in_threadpool(store_voice, uid, reference)
+                config["voice_id"] = selected_voice
+                saved_voice = one("SELECT id,name FROM voices WHERE id=?", (selected_voice,))
+            if is_preset:
                 with connect() as db:
                     db.execute("INSERT INTO presets(user_id,name,model,settings) VALUES (?,?,?,?) ON CONFLICT(user_id,name) DO UPDATE SET model=excluded.model, settings=excluded.settings",
                                (uid, title, model, json.dumps(config)))
-                return render(request, "notice.html", message=f"Saved preset {title}. Find it under Library.", error=False)
-            text = form.get("script", "").strip()
-            if not text or len(text) > 150000:
-                raise ValueError("Enter between 1 and 150,000 characters of text.")
-            title = name_from(form, "title", " ".join(text.split())[:60])
+                response = render(request, "notice.html", message=f"Saved preset {title}. Find it under Library.", error=False)
+                return notify_voice(response, saved_voice)
             folder.mkdir()
-            reference = form.get("reference")
             reused = form.get("reused")
             if model == "lahgtna":
                 dest = folder / "reference.wav"
-                if isinstance(reference, UploadFile) and reference.filename:
-                    await run_in_threadpool(normalize_reference, reference, dest)
-                elif selected_voice:
+                if selected_voice:
                     shutil.copyfile(VOICES / f"{selected_voice}.wav", dest)
                 elif reused and job_for(uid, reused):
                     source = JOBS / reused / "reference.wav"
@@ -228,8 +262,7 @@ async def create_job(request: Request):
             return submit_error(request, str(exc))
     if request.headers.get("HX-Request"):
         response = render(request, "notice.html", message="Job added to the queue.", error=False)
-        response.headers["HX-Trigger"] = "queueUpdated"
-        return response
+        return notify_voice(response, saved_voice, queue=True)
     return RedirectResponse("/", 303)
 
 
@@ -263,20 +296,30 @@ async def save_library(request: Request, kind: str):
                 upload = form.get("reference")
                 if not isinstance(upload, UploadFile) or not upload.filename:
                     raise ValueError("Choose a reference audio file.")
-                key = uuid.uuid4().hex
-                path = VOICES / f"{key}.wav"
-                try:
-                    await run_in_threadpool(normalize_reference, upload, path)
-                    with connect() as db:
-                        db.execute("INSERT INTO voices(id,user_id,name) VALUES (?,?,?)", (key, uid, name))
-                except Exception:
-                    path.unlink(missing_ok=True)
-                    raise
+                await run_in_threadpool(store_voice, uid, upload, name)
+                if request.headers.get("HX-Request"):
+                    return HTMLResponse(headers={"HX-Redirect": "/voices"})
+                return RedirectResponse("/voices", 303)
             else:
                 raise HTTPException(404, "Unknown library type.")
         except ValueError as exc:
             return submit_error(request, str(exc))
     return RedirectResponse("/library", 303)
+
+
+@app.post("/voices/{key}/rename")
+async def rename_voice(request: Request, key: str):
+    async with request.form(max_files=0, max_fields=1) as form:
+        try:
+            name = name_from(form)
+        except ValueError as exc:
+            return submit_error(request, str(exc))
+    with connect() as db:
+        changed = db.execute("UPDATE voices SET name=? WHERE id=? AND user_id=?",
+                             (name, key, current_user(request)["id"])).rowcount
+    if not changed:
+        raise HTTPException(404, "Voice not found.")
+    return RedirectResponse("/voices", 303)
 
 
 @app.post("/library/{kind}/{key}/delete")
@@ -286,5 +329,6 @@ def delete_library(request: Request, kind: str, key: str):
     with connect() as db:
         removed = db.execute(f"DELETE FROM {kind} WHERE id=? AND user_id=?", (key, current_user(request)["id"])).rowcount
     if removed and kind == "voices":
-        (VOICES / f"{key}.wav").unlink(missing_ok=True)
-    return RedirectResponse("/library", 303)
+        for suffix in ("wav", "source", "mp3"):
+            (VOICES / f"{key}.{suffix}").unlink(missing_ok=True)
+    return RedirectResponse("/voices" if kind == "voices" else "/library", 303)

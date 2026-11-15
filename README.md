@@ -17,6 +17,8 @@ Anyone who can reach the port can use the app. Profiles organize the library. Mi
 
 ## Queue and storage
 
-SQLite and a worker lock enforce one running job. The worker exits its current model process before switching TTS models. It unloads a warm model after 75 idle seconds by default. Set `TTS_MODEL_IDLE_SECONDS` to change that period. LM Studio has its own independent lifecycle.
+SQLite and a worker lock enforce one running job. The worker exits its current model process before switching TTS models. It unloads a warm model after two idle minutes by default. Set `TTS_MODEL_IDLE_SECONDS` to change that period. LM Studio has its own independent lifecycle.
 
 Long scripts run in sequential, punctuation-aware chunks. PCM is written to disk as it is produced. FFmpeg exports MP3 or FLAC and applies optional loudness normalization. Back up `data/` to preserve the library, voices, and audio. Use **Reopen** in job history to restore a script and its generation settings.
+
+The Voices page keeps original uploads for playback and download. Lahgtna uses the first 30 seconds as its conditioning clip. Studio uploads and microphone clips also enter Voices when submitted. Drop text, Markdown, DOCX, ODT, RTF, and text-based PDFs into the script editor. PDF import uses Poppler's `pdftotext`.

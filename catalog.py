@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 
-MODELS = {"lahgtna": "Lahgtna Chatterbox", "qwen": "Qwen3-TTS CustomVoice"}
+MODELS = {"qwen": "Qwen3-TTS CustomVoice", "lahgtna": "Lahgtna Chatterbox (Arabic)"}
 DIALECTS = {
     "auto": ("Auto-detect dialect", "", ""),
     "eg": ("Egyptian · مصري", "ar_prompts2.flac", "إزيك؟ النهارده هنسجل حكاية جديدة."),

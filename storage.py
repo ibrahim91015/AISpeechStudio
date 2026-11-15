@@ -66,6 +66,13 @@ def setup():
     with connect() as db:
         db.execute("PRAGMA journal_mode=WAL")
         db.executescript(SCHEMA)
+        columns = {"voices": {"original_name": "TEXT", "media_type": "TEXT", "size": "INTEGER", "duration": "REAL"},
+                   "worker_state": {"phase": "TEXT", "step": "INTEGER", "total": "INTEGER", "target": "TEXT"}}
+        for table, fields in columns.items():
+            existing = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
+            for name, field_type in fields.items():
+                if name not in existing:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {field_type}")
 
 
 def rows(sql, args=()):

@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block title %}Voices · AI Speech Studio{% endblock %}
+{% block body %}
+<div class="page-heading"><h1>Voices</h1><p>Save reference clips for voice cloning in Lahgtna Chatterbox.</p></div>
+<div class="library-grid voices-grid">
+  <section aria-labelledby="saved-voices-heading">
+    <div class="section-head"><h2 id="saved-voices-heading">Saved clips</h2><span class="counter">{{ voices|length }} {{ 'clip' if voices|length == 1 else 'clips' }}</span></div>
+    {% if voices %}
+    <div class="voice-list">
+      {% for voice in voices %}
+      <article class="surface voice-card">
+        <div class="voice-meta">
+          <h3>{{ voice.name }}</h3>
+          {% if voice.original_name %}<small>{{ voice.original_name }}{% if voice.duration %} · {{ '%.1f'|format(voice.duration) }} s{% endif %}</small>{% endif %}
+        </div>
+        <audio controls preload="none" src="/voices/{{ voice.id }}/audio" aria-label="Play {{ voice.name }}"></audio>
+        <div class="voice-actions">
+          <a class="quiet" href="/voices/{{ voice.id }}/audio?download=true" aria-label="Download {{ voice.name }}">Download</a>
+          <details class="voice-edit">
+            <summary class="quiet" aria-label="Manage {{ voice.name }}">Manage</summary>
+            <form class="add-form" method="post" action="/voices/{{ voice.id }}/rename">
+              <label class="sr-only" for="voice-{{ voice.id }}">New name for {{ voice.name }}</label>
+              <input id="voice-{{ voice.id }}" name="name" value="{{ voice.name }}" maxlength="100" required>
+              <button class="button tonal">Rename</button>
+            </form>
+            <form method="post" action="/library/voices/{{ voice.id }}/delete" data-confirm="Delete this voice and its uploaded clip?">
+              <button class="quiet danger" aria-label="Delete {{ voice.name }}">Delete clip</button>
+            </form>
+          </details>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}<div class="empty">Your uploaded reference clips will appear here.</div>{% endif %}
+  </section>
+  <section class="surface" aria-labelledby="upload-voice-heading">
+    <div class="panel-head"><div><h2 id="upload-voice-heading">Upload a voice</h2><p>Choose a clear clip of one speaker. Up to 24 MB.</p></div></div>
+    <form class="add-voice" action="/library/voices" method="post" enctype="multipart/form-data"
+          hx-post="/library/voices" hx-encoding="multipart/form-data" hx-target="#voice-notice" hx-disabled-elt="find button" data-upload-progress="voice-upload-progress">
+      <label>Voice name <input name="name" required maxlength="100"></label>
+      <label>Audio file <input name="reference" type="file" accept="audio/*,.webm,.m4a,.aiff,.aac,.caf,.wma,.wav,.flac,.mp3,.ogg,.opus" required></label>
+      <button class="button primary">Save voice</button>
+      <span id="voice-notice" class="inline-message" aria-live="polite"></span>
+      {% with upload_id='voice-upload-progress', upload_label='Uploading audio clip' %}{% include 'upload_progress.html' %}{% endwith %}
+    </form>
+  </section>
+</div>
+{% endblock %}

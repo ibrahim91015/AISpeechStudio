@@ -1,6 +1,19 @@
 <section class="activity" id="activity" aria-labelledby="activity-heading"
-         hx-get="/activity" hx-trigger="queueUpdated from:body, every 3s" hx-swap="outerHTML">
-  <div class="section-head"><h2 id="activity-heading">Activity</h2><span class="status-pill"><i class="status-dot{% if state.pending %} busy{% endif %}"></i>{% if not state.worker %}Worker starting{% elif state.pending %}Server queue · {{ state.pending }} active or queued{% else %}Worker ready{% endif %}{% if state.loaded %} · {{ models[state.loaded] }} warm{% endif %}</span></div>
+         hx-get="/activity" hx-trigger="queueUpdated from:body, every 1.5s" hx-swap="outerHTML">
+  <div class="section-head"><h2 id="activity-heading">Activity</h2><span class="status-pill"><i class="status-dot{% if state.pending %} busy{% endif %}"></i>{% if not state.worker %}Worker starting{% elif state.pending %}Server queue · {{ state.pending }} active or queued{% else %}Worker ready{% endif %}</span></div>
+  <div class="gpu-progress" id="gpu-progress">
+    {% set stage = state.lifecycle %}
+    {% if stage.total and stage.target %}
+      {% set percent = (100 * stage.step / stage.total)|round|int %}
+      {% if stage.phase == 'loading' %}
+        {% set action = ['Starting the GPU worker','Loading the checkpoint','Synchronizing GPU weights'][stage.step] %}
+      {% else %}
+        {% set action = {'ready': 'Model ready on GPU', 'unloading': 'Unloading model', 'released': 'GPU memory released'}[stage.phase] %}
+      {% endif %}
+      <div class="progress-label"><span>{{ action }} · {{ models[stage.target] }}</span><span>{{ percent }}%</span></div>
+      <progress max="100" value="{{ percent }}" aria-label="{{ action }} ({{ stage.step }} of {{ stage.total }} steps)"></progress>
+    {% endif %}
+  </div>
   {% if jobs %}<div class="job-list">{% for job in jobs %}{% include 'job.html' %}{% endfor %}</div>
   {% else %}<div class="empty">No recordings for {{ profile.name }}. Queued scripts and finished audio for this profile will appear here.</div>{% endif %}
 </section>

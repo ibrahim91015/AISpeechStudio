@@ -4,7 +4,15 @@
     <audio aria-label="Play {{ job.title }}" controls preload="none" src="/jobs/{{ job.id }}/audio"></audio>
     <div class="job-actions"><a class="button tonal" href="/jobs/{{ job.id }}/audio?download=true">Download {{ job.config.format|upper }}</a><a class="quiet" href="/?reuse={{ job.id }}">Reopen</a></div>
   {% elif job.status in ('queued','running') %}
-    <div class="job-progress"><span>{{ job.phase }}{% if job.total %} · {{ job.done }} / {{ job.total }} chunks{% endif %}</span>{% if job.total %}<progress aria-label="Chunks completed" max="{{ job.total }}" value="{{ job.done }}"></progress>{% endif %}</div>
+    <div class="job-progress">
+      {% if job.phase == 'Generating speech' %}
+        <div class="progress-label"><span>{{ job.phase }} · {{ job.done }} / {{ job.total }} chunks</span><span>{{ (100 * job.done / job.total)|round|int }}%</span></div>
+        <progress aria-label="Speech generation" max="{{ job.total }}" value="{{ job.done }}"></progress>
+      {% else %}
+        <span>{{ job.phase }}{% if job.phase == 'Exporting audio' %} · Speech 100%{% endif %}</span>
+        {% if job.status == 'running' and job.phase != 'Loading model' %}<progress aria-label="{{ job.phase }}"></progress>{% endif %}
+      {% endif %}
+    </div>
     <form action="/jobs/{{ job.id }}/cancel" method="post"{% if page != 'library' %} hx-post="/jobs/{{ job.id }}/cancel" hx-target="#activity" hx-swap="outerHTML"{% endif %}><button class="button outlined" type="submit"{% if job.cancel %} disabled{% endif %}>Cancel</button></form>
   {% else %}
     <span class="{% if job.error %}notice-error{% endif %}">{{ job.error or job.status|capitalize }}</span><a class="quiet" href="/?reuse={{ job.id }}">Reopen</a>

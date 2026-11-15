@@ -14,7 +14,7 @@ from storage import AISPEECH, DATA, JOBS, ROOT, connect, one
 
 
 log = logging.getLogger(__name__)
-IDLE_SECONDS = float(os.getenv("TTS_MODEL_IDLE_SECONDS", "75"))
+IDLE_SECONDS = float(os.getenv("TTS_MODEL_IDLE_SECONDS", "120"))
 
 
 class Cancelled(Exception):
@@ -59,6 +59,9 @@ class Worker:
         self.thread = threading.Thread(target=self.loop, name="tts-queue", daemon=True)
         self.process = None
         self.model = None
+        self.lifecycle = ("idle", 0, 0, None)
+        self.last_publish = 0
+        self.output = bytearray()
 
     def start(self):
         self.thread.start()
@@ -68,23 +71,34 @@ class Worker:
         self.thread.join(timeout=12)
 
     def publish(self):
+        self.last_publish = time.monotonic()
         with connect() as db:
-            db.execute("INSERT OR REPLACE INTO worker_state(singleton,model,last_seen) VALUES (1,?,?)", (self.model, time.time()))
+            db.execute("INSERT OR REPLACE INTO worker_state(singleton,model,last_seen,phase,step,total,target) VALUES (1,?,?,?,?,?,?)",
+                       (self.model, time.time(), *self.lifecycle))
+
+    def progress(self, phase, step, total, model):
+        self.lifecycle = (phase, step, total, model)
+        self.publish()
 
     def unload(self):
-        p, self.process = self.process, None
-        self.model = None
-        if p:
-            if p.poll() is None:
-                p.terminate()
-                try:
-                    p.wait(timeout=8)
-                except subprocess.TimeoutExpired:
-                    p.kill()
-                    p.wait()
-            p.stdin.close()
-            p.stdout.close()
-        self.publish()
+        p = self.process
+        if p is None:
+            return
+        model = self.model or self.lifecycle[3]
+        self.progress("unloading", 0, 2, model)
+        if p.poll() is None:
+            p.terminate()
+            self.progress("unloading", 1, 2, model)
+            try:
+                p.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
+        p.stdin.close()
+        p.stdout.close()
+        self.process = self.model = None
+        self.output.clear()
+        self.progress("released", 2, 2, model)
 
     def check(self, job):
         if self.stop_event.is_set() or one("SELECT cancel FROM jobs WHERE id=?", (job,))["cancel"]:
@@ -94,14 +108,22 @@ class Worker:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             self.check(job)
-            if select.select([self.process.stdout], [], [], .4)[0]:
-                line = self.process.stdout.readline()
-                if not line:
-                    raise RuntimeError("The model process exited. Check worker.log for the error.")
+            if time.monotonic() - self.last_publish >= 2:
+                self.publish()
+            if b"\n" in self.output:
+                line, _, self.output = self.output.partition(b"\n")
                 result = json.loads(line)
                 if "error" in result:
                     raise RuntimeError(result["error"])
+                if "loaded_step" in result:
+                    self.progress("loading", result["loaded_step"], 3, self.lifecycle[3])
+                    continue
                 return result
+            if select.select([self.process.stdout], [], [], .4)[0]:
+                data = os.read(self.process.stdout.fileno(), 65536)
+                if not data:
+                    raise RuntimeError("The model process exited. Check worker.log for the error.")
+                self.output.extend(data)
         raise RuntimeError("The model timed out. Try a shorter chunk or check worker.log.")
 
     def load(self, model, job):
@@ -110,6 +132,7 @@ class Worker:
         self.unload()
         self.check(job)
         update(job, phase="Loading model")
+        self.progress("loading", 0, 3, model)
         env = {**os.environ, "HF_HUB_CACHE": str(AISPEECH / "huggingface/hub"), "HF_HUB_OFFLINE": "1",
                "TOKENIZERS_PARALLELISM": "false", "OMP_NUM_THREADS": "2", "PYTHONUNBUFFERED": "1"}
         python = ROOT / ".runtime" / model / "bin/python"
@@ -121,7 +144,7 @@ class Worker:
         if not self.receive(job, 240).get("ready"):
             raise RuntimeError("The model process failed to start.")
         self.model = model
-        self.publish()
+        self.progress("ready", 3, 3, model)
 
     def send(self, job, payload, seconds=180):
         self.check(job)

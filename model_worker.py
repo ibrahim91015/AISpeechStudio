@@ -25,13 +25,15 @@ def dialect_for(text):
     return label if label in DIALECTS and label != "auto" else "eg"
 
 
-def load(kind):
+def load(kind, report_load):
     import torch
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable in this model environment.")
     torch.set_num_threads(2)
     torch.set_num_interop_threads(1)
+    torch.cuda.init()
+    report_load(1)
     if kind == "qwen":
         from qwen_tts import Qwen3TTSModel
 
@@ -107,7 +109,13 @@ def main():
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", buffering=1)
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
     kind = sys.argv[1]
-    model = load(kind)
+    def checkpoint(step):
+        print(json.dumps({"loaded_step": step}), file=protocol)
+
+    model = load(kind, checkpoint)
+    checkpoint(2)
+    import torch
+    torch.cuda.synchronize()
     print(json.dumps({"ready": True}), file=protocol)
     for raw in sys.stdin:
         message = json.loads(raw)
