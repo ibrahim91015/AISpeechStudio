@@ -28,7 +28,7 @@ The clips in `data/references` are original single-speaker recordings from speec
 
 IndexTTS uses the first 15 seconds of the speaker reference. **Speaker voice** uses that recording for both timbre and delivery. Text or audio emotion guidance can be enabled separately. The [maintainers recommend](https://github.com/index-tts/index-tts#-inference) keeping text emotion strength around 0.6 or lower for natural speech.
 
-The Studio defaults keep three beams and temperature 0.8, with top-p 0.88, top-k 35, and repetition penalty 6. Four decoding configurations were compared on the same English script and the three references above using SpeechBrain ECAPA cosine similarity, Whisper word error, and UTMOS estimated naturalness. This combination gave the closest average voice match among the tested settings with similar estimated naturalness to the upstream defaults.
+The Studio defaults use a 260 ms pause between IndexTTS chunks and 0.50 emotion strength. The decoder and 320-character chunks follow the previous defaults. A wider sampling range and lower repetition penalty improved speaker similarity on a short English passage, but the previous decoder held the voice and estimated naturalness better on two longer passages. The shorter pause preserved those results in the follow-up test. The comparisons used SpeechBrain ECAPA, Whisper, and UTMOS.
 
 ## Queue and storage
 

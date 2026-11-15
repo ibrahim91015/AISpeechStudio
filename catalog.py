@@ -74,10 +74,10 @@ QWEN = {
 }
 INDEX_GENERATION = {
     "temperature": Control("Temperature", .8, .1, 2, .1),
-    "top_k": Control("Top-k", 35, 0, 100, 1),
-    "top_p": Control("Top-p", .88, 0, 1, .01),
+    "top_k": Control("Top-k", 30, 0, 100, 1),
+    "top_p": Control("Top-p", .8, 0, 1, .01),
     "num_beams": Control("Beam count", 3, 1, 10, 1),
-    "repetition_penalty": Control("Repetition penalty", 6., .1, 20, .1),
+    "repetition_penalty": Control("Repetition penalty", 10., .1, 20, .1),
     "length_penalty": Control("Length penalty", 0., -2, 2, .1),
     "max_mel_tokens": Control("Max mel tokens", 1500, 50, 1815, 1),
 }
@@ -91,8 +91,7 @@ FLAGS = {"do_sample": "Sample main talker", "subtalker_dosample": "Sample sub-ta
 
 
 def controls(model):
-    chunk_size, max_chunk_size = {"lahgtna": (220, 280), "qwen": (320, 900), "index": (400, 900)}[model]
-    chunk = Control("Characters per chunk", chunk_size, 80, max_chunk_size, 1)
+    chunk = Control("Characters per chunk", 220, 80, 280, 1) if model == "lahgtna" else Control("Characters per chunk", 320, 80, 900, 1)
     result = {**{"lahgtna": ARABIC, "qwen": QWEN, "index": INDEX}[model], **COMMON, "chunk_size": chunk}
     if model == "index":
         result["pause_ms"] = Control("Pause between chunks (ms)", 260, 0, 3000, 10)
