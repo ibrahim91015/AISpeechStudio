@@ -249,6 +249,9 @@ document.addEventListener('htmx:beforeSwap', (event) => {
     if (!old) {
       list.prepend(row);
       htmx.process(row);
+    } else if (old.dataset.status === 'finished' && row.dataset.status === 'finished') {
+      // Finished jobs are immutable. Keep their media elements mounted across refreshes.
+      continue;
     } else if (old.innerHTML !== row.innerHTML || old.dataset.status !== row.dataset.status) {
       const focused = old.contains(document.activeElement);
       const nextProgress = row.querySelector('.job-progress');
