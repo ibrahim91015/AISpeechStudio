@@ -216,7 +216,7 @@ def render(kind, model, data, state):
                                             use_random=s["emo_random"], duration_factor=s["duration_factor"],
                                             text_normalization=s["text_normalization"], interval_silence=s["segment_pause"],
                                             max_text_tokens_per_segment=s["max_text_tokens"], do_sample=s["do_sample"], **options)
-            except UserWarning as exc:
+            except Warning as exc:
                 if not str(exc).startswith("WARN: generation stopped due to exceeding `max_mel_tokens`"):
                     raise
                 raise SpeechLimitError("IndexTTS exhausted its mel tokens before the end of the segment.") from exc

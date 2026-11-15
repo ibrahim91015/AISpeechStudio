@@ -23,6 +23,18 @@ CREATE TABLE IF NOT EXISTS voices (
 CREATE TABLE IF NOT EXISTS reference_clip_names (
     clip_key TEXT PRIMARY KEY, name TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    endpoint TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    p256dh TEXT NOT NULL, auth TEXT NOT NULL, last_test INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS push_subscriptions_owner ON push_subscriptions(user_id);
+CREATE TABLE IF NOT EXISTS push_outbox (
+    id INTEGER PRIMARY KEY, endpoint TEXT NOT NULL REFERENCES push_subscriptions(endpoint) ON DELETE CASCADE,
+    event_key TEXT NOT NULL, payload TEXT NOT NULL, expires INTEGER NOT NULL,
+    next_attempt INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(endpoint, event_key)
+);
+CREATE INDEX IF NOT EXISTS push_outbox_due ON push_outbox(next_attempt, id);
 CREATE TABLE IF NOT EXISTS hidden_reference_collections (
     collection_key TEXT PRIMARY KEY
 );
@@ -77,6 +89,7 @@ def setup():
         db.execute("PRAGMA journal_mode=WAL")
         db.executescript(SCHEMA)
         columns = {"voices": {"original_name": "TEXT", "media_type": "TEXT", "size": "INTEGER", "duration": "REAL"},
+                   "jobs": {"queue_ahead": "INTEGER NOT NULL DEFAULT 0"},
                    "worker_state": {"phase": "TEXT", "step": "INTEGER", "total": "INTEGER", "target": "TEXT"}}
         for table, fields in columns.items():
             existing = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}

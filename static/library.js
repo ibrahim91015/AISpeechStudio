@@ -47,7 +47,7 @@ async function shareRequest(path, method) {
   return data;
 }
 
-document.querySelectorAll('[data-share]').forEach(button => button.addEventListener('click', async () => {
+async function openShare(button, readyRate = '') {
   const version = ++dialogVersion;
   currentShare = '/jobs/' + button.dataset.share + '/share';
   document.querySelector('#share-title').textContent = button.dataset.title;
@@ -62,10 +62,27 @@ document.querySelectorAll('[data-share]').forEach(button => button.addEventListe
     shareForm.hidden = options.length === 0;
     submitShare.disabled = rates.disabled = false;
     shareNotice.textContent = options.length ? '' : 'This recording is already smaller than the available MP3 presets.';
+    const ready = options.find(option => String(option.rate) === readyRate && option.state === 'ready');
+    if (ready) {
+      rates.value = readyRate;
+      showProgress(shareProgress, 'MP3 ready', 100);
+      shareDownload.href = currentShare + '/' + ready.rate + '?download=true';
+      shareDownload.textContent = 'Download MP3 · ' + formatSize(ready.bytes);
+      shareDownload.hidden = false;
+    }
   } catch (error) {
     if (version === dialogVersion) shareNotice.textContent = error.message;
   }
-}));
+}
+
+document.querySelectorAll('[data-share]').forEach(button =>
+  button.addEventListener('click', () => openShare(button)));
+const linkParams = new URLSearchParams(location.search);
+if (linkParams.has('share') && linkParams.has('recording')) {
+  const job = document.getElementById('recording-' + linkParams.get('recording'));
+  const button = job?.querySelector('[data-share]');
+  if (button) openShare(button, linkParams.get('share'));
+}
 
 dialog.addEventListener('close', () => { dialogVersion++; });
 rates.addEventListener('change', () => {

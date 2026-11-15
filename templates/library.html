@@ -5,6 +5,7 @@
 <div class="library-grid">
   <section class="library-main" aria-labelledby="recordings-heading">
     <div class="section-head"><h2 id="recordings-heading">Recordings</h2><div class="library-controls">
+      {% if focused_recording %}<a class="quiet" href="/library">All recordings</a>{% endif %}
       <form action="/library"><label class="sr-only" for="project-filter">Filter by project</label><select name="project" id="project-filter" data-autosubmit><option value="">All projects</option>{% for p in projects %}<option value="{{ p.id }}"{% if selected == p.id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></form>
       {% if jobs %}<button type="button" class="button tonal" id="select-recordings" aria-pressed="false">Select</button>{% endif %}
     </div></div>
@@ -16,9 +17,23 @@
       <button class="button tonal" name="intent" value="move">Move to project</button>
       <button class="button outlined danger" name="intent" value="delete">Delete selected</button>
     </form>
-    {% if jobs %}<div class="job-list">{% for job in jobs %}{% include 'job.html' %}{% endfor %}</div>{% else %}<div class="empty">No recordings in this view. <a href="/">Go to Studio</a></div>{% endif %}
+    {% if jobs %}<div class="job-list">{% for job in jobs %}{% include 'job.html' %}{% endfor %}</div>{% else %}<div class="empty">{% if focused_recording %}This recording is unavailable in the current profile. <a href="#profiles">Switch profile</a>{% else %}No recordings in this view. <a href="/">Go to Studio</a>{% endif %}</div>{% endif %}
   </section>
   <aside class="library-side">
+    <section class="surface alert-settings" id="notifications" aria-labelledby="notification-heading">
+      <h2 id="notification-heading">Notifications</h2>
+      <p>Get an alert when speech is queued, starts after a wait, or finishes. MP3 conversions alert after ten seconds.</p>
+      <div class="notification-buttons">
+        <button class="button tonal" type="button" id="notification-toggle" disabled>Enable alerts</button>
+        <button class="button outlined" type="button" id="notification-test" hidden>Send test</button>
+      </div>
+      <small id="notification-status" aria-live="polite">Checking this browser…</small>
+      <div id="mobile-install" hidden>
+        <h3>Install on your phone</h3>
+        <p id="mobile-install-help"></p>
+        <button class="button outlined" type="button" id="mobile-install-button" hidden>Install Speech Studio</button>
+      </div>
+    </section>
     <section class="surface"><h2>Projects</h2><form class="add-form" method="post" action="/library/projects"><label class="sr-only" for="project-name">New project name</label><input id="project-name" name="name" required maxlength="100" placeholder="Project name"><button class="button tonal">Add</button></form>
     {% for p in projects %}<div class="library-item"><a href="/library?project={{ p.id }}">{{ p.name }}</a><form action="/library/projects/{{ p.id }}/delete" method="post"><button class="quiet" aria-label="Remove project {{ p.name }}">Remove</button></form></div>{% endfor %}</section>
     <section class="surface"><h2>Reference voices</h2><p>{{ voices|length }} saved {{ 'clip' if voices|length == 1 else 'clips' }}</p><a href="/voices" class="button tonal">Manage voices</a></section>

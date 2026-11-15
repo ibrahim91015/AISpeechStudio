@@ -16,6 +16,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from generation_limits import SpeechLimitError
+from notification_events import speech_event
 from storage import AISPEECH, DATA, JOBS, ROOT, connect, one
 
 
@@ -72,6 +73,9 @@ def update(job, **changes):
     with connect() as db:
         names = ",".join(f"{key}=?" for key in changes)
         db.execute(f"UPDATE jobs SET {names}, updated=CURRENT_TIMESTAMP WHERE id=?", (*changes.values(), job))
+        if changes.get("status") in {"finished", "failed"}:
+            row = db.execute("SELECT * FROM jobs WHERE id=?", (job,)).fetchone()
+            speech_event(db, row, row["status"], duration=row["duration"], total=row["total"])
 
 
 def claim():
@@ -81,6 +85,8 @@ def claim():
         if row is None:
             return None
         db.execute("UPDATE jobs SET status='running', phase='Preparing', updated=CURRENT_TIMESTAMP WHERE id=?", (row["id"],))
+        if row["queue_ahead"]:
+            speech_event(db, row, "running")
         return dict(row)
 
 
@@ -292,7 +298,10 @@ class Worker:
             except BlockingIOError:
                 return
             with connect() as db:
+                interrupted = db.execute("SELECT * FROM jobs WHERE status='running'").fetchall()
                 db.execute("UPDATE jobs SET status='failed', phase='Interrupted', error='Server restarted during synthesis. Reopen the job and queue it again.' WHERE status='running'")
+                for job in interrupted:
+                    speech_event(db, job, "failed")
             last_used = time.monotonic()
             try:
                 while not self.stop_event.is_set():
