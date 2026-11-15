@@ -609,7 +609,8 @@ document.addEventListener('htmx:afterSwap', (event) => {
   });
   window.addEventListener('pageshow', () => {
     suspended = false;
-    updatePolling();
+    try { enabled = localStorage.getItem(key) === '1'; } catch {}
+    apply();
   });
   window.addEventListener('storage', event => {
     if (event.key !== key) return;
