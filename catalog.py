@@ -18,6 +18,20 @@ DIALECTS = {
 }
 BUILTIN_VOICES = {key: (value[0], value[1]) for key, value in DIALECTS.items() if value[1]}
 BUILTIN_VOICES["eg-alt"] = ("Egyptian · Alternate recording", "egypt-ref.wav")
+ARABIC_SAMPLES = {
+    "eg": ("صباح الفل، تعالى نحكي عن أول يوم في الرحلة.", "خلي القهوة هنا، أنا راجع بعد شوية."),
+    "sa": ("خذ راحتك، السالفة توها بادية.", "تعال نقعد شوي ونشرب قهوة."),
+    "mo": ("واش نخرجو ندورو شوية فهاد الزنقة؟", "هاد الصباح مشيت للسوق وجبت الخبز."),
+    "iq": ("هسه نطلع نشرب چاي ونرجع للبيت.", "اليوم الجو حلو، شرايك نتمشى شوي؟"),
+    "lb": ("شو رأيك نقعد شوي هون ونشرب قهوة؟", "اليوم الجو حلو كتير، خلّينا نتمشّى."),
+    "sd": ("يا زول، خلينا نمشي السوق قبل المغرب.", "الجو سمح الليلة، نقعد شوية برة؟"),
+    "ly": ("شن رايك نمشوا للبحر قبل الغروب؟", "توا نرجعوا للحوش ونشربوا شاهي."),
+    "sy": ("شو رأيك نطلع نتمشّى قبل ما تغيب الشمس؟", "هلّق بعمل قهوة ومنقعد نحكي شوي."),
+    "tn": ("شنوّة رايك نمشيو للبحر قبل ما تغرب الشمس؟", "توّة نرجع للدار ونحضّر قهوة."),
+    "ps": ("يلا نمشي شوي قبل ما تروح الشمس.", "هلّأ بعمل قهوة ومنقعد نحكي."),
+    "ar": ("وصل القطار قبل الغروب بقليل.", "رحّب الضيوف بالمضيف وجلسوا في الفناء."),
+}
+ARABIC_SAMPLES = {key: (DIALECTS[key][2], *lines) for key, lines in ARABIC_SAMPLES.items()}
 QWEN_LANGUAGES = ("English", "Auto", "Chinese", "Japanese", "Korean", "German", "French", "Russian", "Portuguese", "Spanish", "Italian")
 SPEAKERS = {"Ryan": "English · male", "Aiden": "English · male", "Vivian": "Chinese · female", "Serena": "Chinese · female", "Dylan": "Beijing Mandarin · male", "Eric": "Sichuan Mandarin · male", "Uncle_Fu": "Chinese · male", "Ono_Anna": "Japanese · female", "Sohee": "Korean · female"}
 INDEX_LANGUAGES = {"en": "English", "ar": "Arabic", "zh": "Chinese", "ja": "Japanese", "es": "Spanish", "zhen": "Chinese / English"}

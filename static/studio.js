@@ -152,7 +152,8 @@ function previewReference() {
     if (!select || !audio) continue;
     const voice = select.value || (dialect?.value && dialect.value !== 'auto' ? 'dialect:' + dialect.value : '');
     const src = voice.startsWith('dialect:') ? '/references/' + voice.slice(8) :
-      (voice ? '/voices/' + voice + '/audio?reference=true' : '');
+      voice.startsWith('previous:') ? '/jobs/' + voice.slice(9) + '/reference' :
+        (voice ? '/voices/' + voice + '/audio?reference=true' : '');
     audio.hidden = !src;
     if (src && audio.getAttribute('src') !== src) audio.src = src;
     else if (!src && audio.hasAttribute('src')) {
@@ -198,7 +199,9 @@ function uploadStudioReference(file, selected) {
   if (!file || voiceUpload) return;
   const status = document.querySelector('#reference-status');
   const progress = document.querySelector('#reference-upload-progress');
+  const inputs = [...studioFields.querySelectorAll('input[type=file]')];
   modelSelect.disabled = true;
+  inputs.forEach(input => { input.disabled = true; });
   status.hidden = true;
   showProgress(progress, 'Uploading ' + file.name, 0);
   voiceUpload = uploadVoice(file, progress, voice => {
@@ -209,6 +212,7 @@ function uploadStudioReference(file, selected) {
     status.hidden = false;
     progress.hidden = true;
     modelSelect.disabled = false;
+    inputs.forEach(input => { input.disabled = false; });
     voiceUpload = null;
   });
 }
@@ -413,7 +417,8 @@ document.addEventListener('click', (event) => {
   if (button.id === 'remove-marks') replaceText(editor.value.replace(/[\u064b-\u0652]/g, ''));
   if (button.id === 'sample-text' || button.id === 'random-text') {
     if (button.id === 'random-text') {
-      const samples = Object.values(catalog).map(item => item[2]).filter(sample => sample && sample !== lastArabicSample);
+      const dialect = document.querySelector('#dialect').value;
+      const samples = (catalog[dialect] || Object.values(catalog).flat()).filter(sample => sample !== lastArabicSample);
       lastArabicSample = samples[Math.floor(Math.random() * samples.length)];
       replaceText(lastArabicSample);
     } else replaceText('The lights are on. Let’s record a short introduction.');

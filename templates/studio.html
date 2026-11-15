@@ -32,7 +32,7 @@
   <section class="surface settings-panel" aria-labelledby="settings-heading">
     <div class="panel-head"><div><h2 id="settings-heading">Voice &amp; settings</h2><p>Choose the model and delivery.</p></div></div>
     <label for="model">TTS model</label>
-    <select name="model" id="model" hx-get="/controls" hx-target="#fields" hx-swap="innerHTML">
+    <select name="model" id="model" hx-get="/controls" hx-include="[name=reused]" hx-target="#fields" hx-swap="innerHTML">
       {% for key, label in models.items() %}<option value="{{ key }}"{% if key == model %} selected{% endif %}>{{ label }}</option>{% endfor %}
     </select>
     <div id="fields">{% include 'controls.html' %}</div>
@@ -46,5 +46,5 @@
   </div>
 </form>
 {% include 'activity.html' %}
-<script type="application/json" id="editor-catalog">{{ dialects|tojson }}</script>
+<script type="application/json" id="editor-catalog">{{ arabic_samples|tojson }}</script>
 {% endblock %}

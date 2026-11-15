@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.datastructures import UploadFile
 from starlette.concurrency import run_in_threadpool
 
-from catalog import BUILTIN_VOICES, DIALECTS, EMOTIONS, FLAGS, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, SPEAKERS, TASHKIL, controls, defaults, settings_from
+from catalog import ARABIC_SAMPLES, BUILTIN_VOICES, DIALECTS, EMOTIONS, FLAGS, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, SPEAKERS, TASHKIL, controls, defaults, settings_from
 from documents import IMPORT_EXTENSIONS, MAX_TEXT, import_document
 from queue_worker import Worker
 import shares
@@ -50,7 +50,7 @@ app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 templates = Jinja2Templates(directory=ROOT / "templates")
 templates.env.globals.update(models=MODELS, dialects=DIALECTS, languages=QWEN_LANGUAGES, speakers=SPEAKERS,
                              flags=FLAGS, controls=controls, tashkil=TASHKIL, builtin_voices=BUILTIN_VOICES,
-                             index_languages=INDEX_LANGUAGES, emotions=EMOTIONS,
+                             index_languages=INDEX_LANGUAGES, emotions=EMOTIONS, arabic_samples=ARABIC_SAMPLES,
                              import_extensions=",".join(IMPORT_EXTENSIONS), max_text=MAX_TEXT)
 
 
@@ -69,15 +69,31 @@ def current_user(request):
 
 
 def reference_file(uid, key):
+    if not isinstance(key, str):
+        return None
     if key.startswith("dialect:"):
         builtin = BUILTIN_VOICES.get(key.removeprefix("dialect:"))
         return REFERENCES / builtin[1] if builtin else None
+    if key.startswith("previous:"):
+        job = key.removeprefix("previous:")
+        if one("SELECT id FROM jobs WHERE id=? AND user_id=?", (job, uid)):
+            path = JOBS / job / "reference.wav"
+            return path if path.is_file() else None
     if one("SELECT id FROM voices WHERE id=? AND user_id=?", (key, uid)):
         return VOICES / f"{key}.wav"
 
 
 def render(request, template, **data):
-    return templates.TemplateResponse(request, template, {"profile": current_user(request), **data})
+    profile = current_user(request)
+    response = templates.TemplateResponse(request, template, {"profile": profile, **data})
+    if data.get("page") and request.cookies.get("studio_profile") != str(profile["id"]):
+        remember_profile(response, profile["id"])
+    return response
+
+
+def remember_profile(response, uid):
+    response.set_cookie("studio_profile", str(uid), httponly=True, samesite="lax", max_age=60*60*24*365)
+    return response
 
 
 def lookups(uid):
@@ -136,17 +152,22 @@ def studio(request: Request, model: str = "qwen", preset: int | None = None, reu
         config.update(json.loads(source["settings"]))
     if config.get("voice_id") and not reference_file(uid, config["voice_id"]):
         config["voice_id"] = ""
+    previous_voice = f"previous:{reuse}" if previous and reference_file(uid, f"previous:{reuse}") else ""
+    if previous_voice and not config.get("voice_id"):
+        config["voice_id"] = previous_voice
     if config.get("emo_voice") and not reference_file(uid, config["emo_voice"]):
         config["emo_voice"] = ""
-    return render(request, "studio.html", page="studio", model=model, config=config, reused=previous,
+    return render(request, "studio.html", page="studio", model=model, config=config, reused=previous, previous_voice=previous_voice,
                   text=previous["script"] if previous else "", jobs=history(uid, limit=8), state=health_data(), **lookups(uid))
 
 
 @app.get("/controls", response_class=HTMLResponse)
-def model_controls(request: Request, model: str = "qwen"):
+def model_controls(request: Request, model: str = "qwen", reused: str = ""):
     if model not in MODELS:
         raise HTTPException(404, "Model not found.")
-    return render(request, "controls.html", model=model, config=defaults(model), **lookups(current_user(request)["id"]))
+    uid = current_user(request)["id"]
+    previous_voice = f"previous:{reused}" if reused and reference_file(uid, f"previous:{reused}") else ""
+    return render(request, "controls.html", model=model, config=defaults(model), previous_voice=previous_voice, **lookups(uid))
 
 
 @app.get("/activity", response_class=HTMLResponse)
@@ -232,6 +253,17 @@ def job_audio(request: Request, key: str, download: bool = False):
     if job["status"] != "finished" or not path.is_file():
         raise HTTPException(404, "Audio is not available yet.")
     return FileResponse(path, filename=f"{job['title']}.{extension}" if download else None)
+
+
+@app.get("/jobs/{key}/reference")
+def job_reference_audio(request: Request, key: str):
+    path = reference_file(current_user(request)["id"], f"previous:{key}")
+    if not path:
+        raise HTTPException(404, "Reference audio unavailable.")
+    # A copied built-in reference may originally have been FLAC.
+    with path.open("rb") as file:
+        media_type = "audio/flac" if file.read(4) == b"fLaC" else "audio/wav"
+    return FileResponse(path, media_type=media_type)
 
 
 def share_source(request, key):
@@ -337,15 +369,10 @@ async def create_job(request: Request):
                 response = render(request, "notice.html", message=f"Saved preset {title}. Find it under Library.", error=False)
                 return notify_voice(response, saved_voice)
             folder.mkdir()
-            reused = form.get("reused")
             if model in {"lahgtna", "index"}:
                 dest = folder / "reference.wav"
                 if selected_voice:
                     shutil.copyfile(reference_file(uid, selected_voice), dest)
-                elif reused and job_for(uid, reused):
-                    source = JOBS / reused / "reference.wav"
-                    if source.is_file():
-                        shutil.copyfile(source, dest)
             if emotion_voice:
                 shutil.copyfile(reference_file(uid, emotion_voice), folder / "emotion.wav")
             with connect() as db:
@@ -435,9 +462,7 @@ async def save_library(request: Request, kind: str):
                 with connect() as db:
                     db.execute("INSERT OR IGNORE INTO users(name) VALUES (?)", (name,))
                     chosen = db.execute("SELECT id FROM users WHERE name=?", (name,)).fetchone()[0]
-                response = RedirectResponse("/library#profiles", 303)
-                response.set_cookie("studio_profile", str(chosen), httponly=True, samesite="lax", max_age=60*60*24*365)
-                return response
+                return remember_profile(RedirectResponse("/library#profiles", 303), chosen)
             if kind == "projects":
                 with connect() as db:
                     db.execute("INSERT OR IGNORE INTO projects(user_id,name) VALUES (?,?)", (uid, name))
@@ -480,9 +505,7 @@ async def choose_profile(request: Request):
         if form.get("intent") == "default":
             with connect() as db:
                 db.execute("UPDATE site_profile SET user_id=? WHERE singleton=1", (profile["id"],))
-    response = RedirectResponse("/library#profiles", 303)
-    response.set_cookie("studio_profile", str(profile["id"]), httponly=True, samesite="lax", max_age=60*60*24*365)
-    return response
+    return remember_profile(RedirectResponse("/library#profiles", 303), profile["id"])
 
 
 @app.post("/library/{kind}/{key}/delete")

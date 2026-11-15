@@ -5,6 +5,7 @@
 <label>Reference voice
   <select name="voice_id" id="voice-id">
     <option value="">{{ ('Dialect reference · ' ~ dialects[config.dialect][0]) if model == 'lahgtna' else 'Choose a voice' }}</option>
+    {% if previous_voice %}<option value="{{ previous_voice }}"{% if previous_voice == config.voice_id %} selected{% endif %}>Previous recording’s reference</option>{% endif %}
     {{ options(config.voice_id) }}
   </select>
 </label>
