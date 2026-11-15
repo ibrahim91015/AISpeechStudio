@@ -1,6 +1,7 @@
 transformers==4.46.3
 numpy==1.26.4
 librosa==0.10.0
+setuptools==79.0.1
 soundfile>=0.12,<1
 s3tokenizer==0.3.0
 diffusers==0.29.0
