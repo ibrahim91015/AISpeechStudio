@@ -1,5 +1,13 @@
 const editor = document.querySelector('#script');
 const generationLimit = Number(editor?.dataset.generationLimit);
+const generateLabel = document.querySelector('#generate-label');
+const jobTitle = document.querySelector('#speech-form [name=title]');
+const tabKey = 'aispeech-request-tab';
+let requestTab = [...crypto.getRandomValues(new Uint32Array(4))].map(n => n.toString(16)).join('-');
+try {
+  requestTab = sessionStorage.getItem(tabKey) || requestTab;
+  sessionStorage.setItem(tabKey, requestTab);
+} catch {}
 let recorder = null;
 let importing = false;
 let voiceUpload = null;
@@ -67,9 +75,40 @@ function refreshCount() {
   if (editor) document.querySelector('#character-count').textContent = `${editor.value.length.toLocaleString()} characters`;
 }
 
+function updateGenerateLabel() {
+  const runs = countRuns(generationText().text);
+  generateLabel.textContent = runs > 1 ? 'Generate audio (' + runs + ' runs)' : 'Generate audio';
+}
+
+function countRuns(value) {
+  return Math.ceil((value.length - (value.match(/[\udc00-\udfff]/g)?.length || 0)) / generationLimit);
+}
+
+function generationText() {
+  const value = editor.value;
+  const selected = value.length > generationLimit && editor.selectionEnd > editor.selectionStart;
+  const start = selected ? editor.selectionStart : 0;
+  const raw = selected ? value.slice(start, editor.selectionEnd) : value;
+  return raw.trim() ? {text: raw.trim(), start: start + raw.length - raw.trimStart().length} :
+    {text: value.trim(), start: value.length - value.trimStart().length};
+}
+
+function setImportTitle(value) {
+  const eligible = !jobTitle.value || jobTitle.value === draft.importTitle;
+  if (eligible) jobTitle.value = value;
+  draft.importTitle = value;
+  return eligible;
+}
+
+function fileTitle(filename) {
+  return filename.replace(/\.[^.]+$/, '').slice(0, 85);
+}
+
 function replaceText(value) {
+  delete draft.importRange;
   editor.value = value;
   refreshCount();
+  updateGenerateLabel();
   editor.focus();
   scheduleSave();
 }
@@ -130,17 +169,21 @@ if (ebookPicker) {
     return ebooks[Number(bookSelect.value)];
   }
 
-  function rangeText() {
+  function bookRange() {
     const book = activeBook();
     const entries = book[mode.value];
-    return book.text.slice(entries[Number(from.value)].start, entries[Number(through.value)].end).trim();
+    const first = Number(from.value), last = Number(through.value);
+    const firstOffset = entries[first].start;
+    const raw = book.text.slice(firstOffset, entries[last].end);
+    return {book, entries, first, last, text: raw.trim(), offset: firstOffset + raw.length - raw.trimStart().length};
   }
 
   function showRange() {
-    const length = rangeText().length;
+    const {text} = bookRange();
+    const length = text.length, runs = countRuns(text);
     load.disabled = !length || length > editor.maxLength;
     status.textContent = length.toLocaleString() + ' characters' +
-      (length > generationLimit ? ' · Select a passage of up to 150,000 characters to generate audio.' : '');
+      (runs > 1 ? ' · ' + runs + ' runs' : '');
     try {
       sessionStorage.setItem(rangeKey, JSON.stringify([bookSelect.selectedIndex, mode.value, from.selectedIndex, through.selectedIndex]));
     } catch {}
@@ -197,7 +240,21 @@ if (ebookPicker) {
     if (from.selectedIndex > through.selectedIndex) from.value = through.value;
     showRange();
   });
-  load.addEventListener('click', () => replaceText(rangeText()));
+  load.addEventListener('click', () => {
+    const {book, entries, first, last, text, offset} = bookRange();
+    const name = (book.title || fileTitle(book.name)).slice(0, 85);
+    const tag = {chapters: 'ch', sections: 'sc', pages: 'pg'}[mode.value];
+    const spans = entries.slice(first, last + 1).map((entry, index) => {
+      const numbered = entry.label.match(/^(?:chapter\s+)?(\d+)(?:\b|[.:])/i);
+      const token = tag !== 'sc' && numbered ? numbered[1] : first + index + 1;
+      return [entry.start - offset, entry.end - offset, String(token)];
+    });
+    const begin = spans[0][2], end = spans.at(-1)[2];
+    const label = name + '-' + tag + begin + (begin === end ? '' : '-' + end);
+    replaceText(text);
+    if (setImportTitle(label)) draft.importRange = {book: name, mode: tag, label, spans};
+    rememberDraft();
+  });
   ebookPicker.querySelector('#close-ebook').addEventListener('click', () => {
     ebooks = [];
     saveBooks();
@@ -242,7 +299,8 @@ async function importFiles(files) {
     if (texts.length) {
       if (editor.value !== initial) throw new Error('The script changed during import. Drop the files again to replace it.');
       replaceText(texts.join('\n\n'));
-      if (length > generationLimit) warnings.push('Select up to 150,000 characters in the script to generate that passage.');
+      const documents = files.filter(file => !/\.(epub|mobi)$/i.test(file.name));
+      setImportTitle(fileTitle(documents[0].name));
     }
     status.classList.add('notice-ok');
     const imported = files.length === 1 ? 'Imported ' + files[0].name + '.' : 'Imported ' + files.length + ' files.';
@@ -445,6 +503,7 @@ if (editor) {
     window.addEventListener('DOMContentLoaded', () => htmx.trigger(modelSelect, 'change'), {once: true});
   }
   refreshCount();
+  updateGenerateLabel();
   refreshModelUi();
   studioForm.addEventListener('input', event => {
     if (event.target.id === 'reference-transcript' && !event.target.readOnly) {
@@ -472,7 +531,13 @@ if (editor) {
       if (option.isConnected && select.value === option.value) refreshReferenceTranscript();
     } catch { /* Retain the displayed transcript if the server cannot be reached. */ }
   });
-  editor.addEventListener('input', refreshCount);
+  editor.addEventListener('input', () => {
+    delete draft.importRange;
+    refreshCount();
+    updateGenerateLabel();
+  });
+  editor.addEventListener('select', updateGenerateLabel);
+  editor.addEventListener('keyup', updateGenerateLabel);
   editor.addEventListener('dragover', (event) => {
     if (!event.dataTransfer.types.includes('Files')) return;
     event.preventDefault();
@@ -801,19 +866,20 @@ document.addEventListener('submit', (event) => {
 
 document.addEventListener('htmx:configRequest', (event) => {
   const {elt, formData} = event.detail;
-  if (elt !== studioForm || editor.value.length <= generationLimit) return;
+  if (elt !== studioForm) return;
+  formData.set('request_tab', requestTab);
   if (formData.get('intent') === 'preset') {
     formData.delete('script');
     return;
   }
-  const selection = editor.value.slice(editor.selectionStart, editor.selectionEnd).trim();
-  if (selection && selection.length <= generationLimit) {
-    formData.set('script', selection);
-    return;
+  const {text, start} = generationText();
+  formData.set('script', text);
+  if (draft.importRange && jobTitle.value === draft.importRange.label) {
+    const plan = draft.importRange;
+    const spans = plan.spans.filter(span => span[0] < start + text.length && span[1] > start)
+      .map(([lo, hi, label]) => [lo - start, hi - start, label]);
+    formData.set('import_range', JSON.stringify({...plan, spans}));
   }
-  event.preventDefault();
-  document.querySelector('#notice').textContent = 'Select a passage of up to 150,000 characters to generate audio.';
-  editor.focus();
 });
 
 document.addEventListener('htmx:beforeRequest', (event) => {

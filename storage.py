@@ -97,7 +97,8 @@ def setup():
         db.execute("PRAGMA journal_mode=WAL")
         db.executescript(SCHEMA)
         columns = {"voices": {"original_name": "TEXT", "media_type": "TEXT", "size": "INTEGER", "duration": "REAL", "transcript": "TEXT"},
-                   "jobs": {"queue_ahead": "INTEGER NOT NULL DEFAULT 0", "request_device": "TEXT"},
+                   "jobs": {"queue_ahead": "INTEGER NOT NULL DEFAULT 0", "request_device": "TEXT",
+                            "batch_id": "TEXT", "request_tab": "TEXT", "queue_priority": "INTEGER NOT NULL DEFAULT 0"},
                    "push_subscriptions": {"device_id": "TEXT", "mobile": "INTEGER NOT NULL DEFAULT 0",
                                           "last_seen": "INTEGER NOT NULL DEFAULT 0"},
                    "worker_state": {"phase": "TEXT", "step": "INTEGER", "total": "INTEGER", "target": "TEXT"}}

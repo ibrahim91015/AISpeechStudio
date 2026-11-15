@@ -348,7 +348,9 @@ def epub_content(data, decode, limit, max_text):
         for link, label in page_list:
             if link in locations:
                 pages.insert(0, (locations[link], label))
-    return section_ranges("\n\n".join(blocks), chapters, headings, pages, files)
+    result = section_ranges("\n\n".join(blocks), chapters, headings, pages, files)
+    result["title"] = (package.findtext("./{*}metadata/{*}title") or "").strip()[:100]
+    return result
 
 
 def ebook_content(upload, extension, decode, limit, max_text):

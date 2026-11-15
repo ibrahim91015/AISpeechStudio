@@ -9,14 +9,12 @@ import signal
 import subprocess
 import threading
 import time
-import wave
 import unicodedata
-from collections import deque
-from contextlib import ExitStack
 from pathlib import Path
 
 from generation_limits import SpeechLimitError
 from notification_events import speech_event
+from speech_assembly import SpeechAssembly
 from storage import AISPEECH, DATA, JOBS, ROOT, connect, one
 
 
@@ -27,6 +25,14 @@ IDLE_SECONDS = float(os.getenv("TTS_MODEL_IDLE_SECONDS", "120"))
 
 
 class Cancelled(Exception):
+    pass
+
+
+class WorkerStopping(Exception):
+    pass
+
+
+class ModelConnectionError(RuntimeError):
     pass
 
 
@@ -57,16 +63,24 @@ def split_retry(text):
 
 
 def chunk_text(text, limit):
-    rest = text.strip()
-    while len(rest) > limit:
-        search = rest[:limit + 1]
+    start = 0
+    while len(text) - start > limit:
+        search = text[start:start + limit + 1]
+        if not search.strip():
+            start += len(search)
+            continue
         ends = list(SENTENCE_END.finditer(search))
-        cut = ends[-1].end() if ends and ends[-1].end() >= limit // 3 else search.rfind(" ")
-        cut = safe_cut(rest, cut if cut > 0 else limit)
-        yield rest[:cut].strip()
-        rest = rest[cut:].lstrip()
-    if rest:
-        yield rest
+        spaces = list(re.finditer(r"\s", search))
+        cut = ends[-1].end() if ends and ends[-1].end() >= limit // 3 else spaces[-1].start() if spaces else limit
+        cut = max(1, safe_cut(text[start:start + limit + 256], cut if cut > 0 else limit))
+        piece = text[start:start + cut].strip()
+        if piece:
+            yield piece
+        start += cut
+        while start < len(text) and text[start].isspace():
+            start += 1
+    if piece := text[start:].strip():
+        yield piece
 
 
 def update(job, **changes):
@@ -81,7 +95,7 @@ def update(job, **changes):
 def claim():
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        row = db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY created,rowid LIMIT 1").fetchone()
+        row = db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY queue_priority DESC,created,rowid LIMIT 1").fetchone()
         if row is None:
             return None
         db.execute("UPDATE jobs SET status='running', phase='Preparing', updated=CURRENT_TIMESTAMP WHERE id=?", (row["id"],))
@@ -164,8 +178,11 @@ class Worker:
         self.progress("released", 2, 2, model)
 
     def check(self, job):
-        if self.stop_event.is_set() or one("SELECT cancel FROM jobs WHERE id=?", (job,))["cancel"]:
+        row = one("SELECT cancel FROM jobs WHERE id=?", (job,))
+        if not row or row["cancel"]:
             raise Cancelled
+        if self.stop_event.is_set():
+            raise WorkerStopping
 
     def receive(self, job, seconds):
         deadline = time.monotonic() + seconds
@@ -187,9 +204,9 @@ class Worker:
             if select.select([self.process.stdout], [], [], .4)[0]:
                 data = os.read(self.process.stdout.fileno(), 65536)
                 if not data:
-                    raise RuntimeError("The model process exited. Check worker.log for the error.")
+                    raise ModelConnectionError("The model process exited. Check worker.log for the error.")
                 self.output.extend(data)
-        raise RuntimeError("The model timed out. Try a shorter chunk or check worker.log.")
+        raise ModelConnectionError("The model timed out. Try a shorter chunk or check worker.log.")
 
     def load(self, model, job):
         if self.model == model and self.process.poll() is None:
@@ -213,83 +230,114 @@ class Worker:
 
     def send(self, job, payload, seconds=180):
         self.check(job)
-        self.process.stdin.write(json.dumps(payload) + "\n")
-        self.process.stdin.flush()
+        try:
+            self.process.stdin.write(json.dumps(payload) + "\n")
+            self.process.stdin.flush()
+        except BrokenPipeError as exc:
+            raise ModelConnectionError("The model closed its input stream.") from exc
         return self.receive(job, seconds)["ok"]
+
+    def prepare(self, job, folder, script, settings):
+        key = job["id"]
+        self.load(job["model"], key)
+        update(key, phase="Preparing voice")
+        reference = folder / "reference.wav"
+        prepared = self.send(key, {"op": "prepare", "script": script, "settings": settings,
+                                   "reference": str(reference) if reference.exists() else None,
+                                   "emotion": str(folder / "emotion.wav") if settings.get("emo_voice") else None})
+        if prepared.get("dialect") and settings.get("dialect") == "auto":
+            settings["detected_dialect"] = prepared["dialect"]
+            update(key, settings=json.dumps(settings))
+        update(key, phase="Generating speech")
+        return prepared, True
+
+    def render_chunk(self, key, text, path, settings, prepared, first, assembly, pause, depth=0):
+        path.unlink(missing_ok=True)
+        try:
+            self.send(key, {"op": "render", "text": text, "output": str(path), "first": first,
+                            "settings": settings, **prepared})
+        except SpeechLimitError as exc:
+            left, right = split_retry(text)
+            if depth >= 5 or min(len(left), len(right)) < 8:
+                raise SpeechLimitError(f"Chunk {assembly.index + 1} still reached the audio-token limit after shortening. "
+                                       "Raise the audio-token limit in Advanced generation if available.") from exc
+            self.render_chunk(key, left, path, settings, prepared, first, assembly, pause, depth + 1)
+            self.render_chunk(key, right, path, settings, prepared, False, assembly, min(pause, 80), depth + 1)
+        else:
+            assembly.append(path, pause)
+
+    def export(self, key, folder, assembly, settings):
+        self.check(key)
+        update(key, phase="Exporting audio")
+        rate, channels = str(assembly.rate), str(assembly.channels)
+        format = settings["format"]
+        staged = folder / f"export.{format}"
+        staged.unlink(missing_ok=True)
+        args = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "s16le", "-ar", rate,
+                "-ac", channels, "-i", str(assembly.path)]
+        if settings["normalize"]:
+            args += ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"]
+        if format == "mp3":
+            args += ["-codec:a", "libmp3lame", "-q:a", "2"]
+        if format == "wav":
+            args += ["-rf64", "auto"]
+        with (DATA / "worker.log").open("ab") as log_file:
+            process = subprocess.Popen([*args, "-ar", rate, str(staged)], stderr=log_file)
+            try:
+                last_size, last_progress = 0, time.monotonic()
+                while process.poll() is None:
+                    self.check(key)
+                    if time.monotonic() - self.last_publish >= 2:
+                        self.publish()
+                    if shutil.disk_usage(folder).free < MIN_DISK_FREE:
+                        raise RuntimeError("Free server disk space before exporting audio.")
+                    size = staged.stat().st_size if staged.exists() else 0
+                    if size > last_size:
+                        last_size, last_progress = size, time.monotonic()
+                    if time.monotonic() - last_progress > 180:
+                        raise RuntimeError("Audio export stopped making progress. Check worker.log.")
+                    self.stop_event.wait(.5)
+                if process.returncode or not staged.is_file() or staged.stat().st_size == 0:
+                    raise RuntimeError("Audio export failed. Check worker.log.")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+        self.check(key)
+        staged.replace(folder / f"speech.{format}")
+        update(key, status="finished", phase="Ready", duration=assembly.duration)
 
     def run(self, job):
         key = job["id"]
         folder = JOBS / key
         folder.mkdir(exist_ok=True)
         part = folder / "chunk.wav"
-        source = folder / "assembly.wav"
         settings = json.loads(job["settings"])
         script = job["script"]
         if job["model"] == "lahgtna" and not settings["keep_tags"]:
             script = re.sub(r"\[[^\]\n]{1,40}\]", "", script)
-        chunks = deque((part, 0) for part in chunk_text(script, settings["chunk_size"]))
+        chunks = list(chunk_text(script, settings["chunk_size"]))
         if not chunks:
             raise ValueError("The text has no spoken content after removing tags.")
-        if shutil.disk_usage(folder).free < MIN_DISK_FREE:
-            raise RuntimeError("Free at least 1 GiB of server disk space before generating audio.")
-        self.load(job["model"], key)
-        total = len(chunks)
-        update(key, phase="Preparing voice", total=total)
-        reference = folder / "reference.wav"
-        prepared = self.send(key, {"op": "prepare", "script": script, "settings": settings,
-                                   "reference": str(reference) if reference.exists() else None,
-                                   "emotion": str(folder / "emotion.wav") if settings.get("emo_voice") else None})
-        if prepared.get("dialect") and settings["dialect"] == "auto":
-            settings["detected_dialect"] = prepared["dialect"]
-            update(key, settings=json.dumps(settings))
-        update(key, phase="Generating speech")
-        with ExitStack() as files:
-            output = None
-            done = 0
-            while chunks:
-                text, depth = chunks.popleft()
+        assembly = SpeechAssembly(folder, chunks)
+        update(key, total=len(chunks), done=assembly.index)
+        if assembly.index < len(chunks):
+            prepared, first = self.prepare(job, folder, script, settings)
+            for index in range(assembly.index, len(chunks)):
+                self.check(key)
                 if shutil.disk_usage(folder).free < MIN_DISK_FREE:
                     raise RuntimeError("Generation stopped because the server has less than 1 GiB of free disk space.")
                 try:
-                    self.send(key, {"op": "render", "text": text, "output": str(part), "first": done == 0,
-                                    "settings": settings, **prepared})
-                except SpeechLimitError as exc:
-                    left, right = split_retry(text)
-                    if depth >= 5 or min(len(left), len(right)) < 8:
-                        raise SpeechLimitError(f"Chunk {done + 1} still reached the audio-token limit after shortening. "
-                                               "Raise the audio-token limit in Advanced generation if available.") from exc
-                    chunks.extendleft(((right, depth + 1), (left, depth + 1)))
-                    total += 1
-                    update(key, total=total)
-                    continue
-                with wave.open(str(part), "rb") as audio:
-                    if output is None:
-                        rate = audio.getframerate()
-                        output = files.enter_context(wave.open(str(source), "wb"))
-                        output.setparams(audio.getparams())
-                        silence = b"\0" * round(rate * settings["pause_ms"] / 1000) * audio.getsampwidth() * audio.getnchannels()
-                    elif done:
-                        output.writeframesraw(silence)
-                    output.writeframesraw(audio.readframes(audio.getnframes()))
-                done += 1
-                update(key, done=done)
-            duration = output.getnframes() / rate
-        self.check(key)
-        update(key, phase="Exporting audio")
-        final = folder / f"speech.{settings['format']}"
-        if settings["format"] == "wav" and not settings["normalize"]:
-            source.replace(final)
-        else:
-            staged = folder / f"export.{settings['format']}"
-            args = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(source)]
-            if settings["normalize"]:
-                args += ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"]
-            if settings["format"] == "mp3":
-                args += ["-codec:a", "libmp3lame", "-q:a", "2"]
-            subprocess.run([*args, "-ar", str(rate), str(staged)], check=True, timeout=240)
-            self.check(key)
-            staged.replace(final)
-        update(key, status="finished", phase="Ready", duration=duration)
+                    self.render_chunk(key, chunks[index], part, settings, prepared, first, assembly, settings["pause_ms"])
+                except ModelConnectionError:
+                    assembly.rewind()
+                    self.unload()
+                    prepared, first = self.prepare(job, folder, script, settings)
+                    self.render_chunk(key, chunks[index], part, settings, prepared, first, assembly, settings["pause_ms"])
+                first = False
+                assembly.commit(index + 1)
+                update(key, done=index + 1)
+        self.export(key, folder, assembly, settings)
 
     def loop(self):
         with (DATA / "worker.lock").open("a") as lock:
@@ -298,10 +346,8 @@ class Worker:
             except BlockingIOError:
                 return
             with connect() as db:
-                interrupted = db.execute("SELECT * FROM jobs WHERE status='running'").fetchall()
-                db.execute("UPDATE jobs SET status='failed', phase='Interrupted', error='Server restarted during synthesis. Reopen the job and queue it again.' WHERE status='running'")
-                for job in interrupted:
-                    speech_event(db, job, "failed")
+                db.execute("UPDATE jobs SET status='cancelled', phase='Cancelled' WHERE status='running' AND cancel=1")
+                db.execute("UPDATE jobs SET status='queued', phase='Waiting to resume', queue_priority=2 WHERE status='running'")
             last_used = time.monotonic()
             try:
                 while not self.stop_event.is_set():
@@ -313,8 +359,12 @@ class Worker:
                         self.stop_event.wait(.7)
                         continue
                     key = job["id"]
+                    paused = False
                     try:
                         self.run(job)
+                    except WorkerStopping:
+                        paused = True
+                        update(key, status="queued", phase="Waiting to resume", queue_priority=2)
                     except Cancelled:
                         self.unload()
                         update(key, status="cancelled", phase="Cancelled")
@@ -324,7 +374,10 @@ class Worker:
                         update(key, status="failed", phase="Failed", error=str(exc)[:700])
                     finally:
                         folder = JOBS / key
-                        for scratch in ("chunk.wav", "assembly.wav", "export.wav", "export.mp3", "export.flac"):
+                        scratch_files = ["chunk.wav", "assembly.wav", "export.wav", "export.mp3", "export.flac"]
+                        if not paused:
+                            scratch_files.extend(("assembly.pcm", "assembly.json", "assembly.tmp"))
+                        for scratch in scratch_files:
                             (folder / scratch).unlink(missing_ok=True)
                         last_used = time.monotonic()
             finally:

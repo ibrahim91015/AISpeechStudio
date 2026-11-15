@@ -15,7 +15,6 @@ from pdf_import import pdf_text
 
 MAX_BYTES = 65 * 1024 * 1024
 MAX_MEMBER_BYTES = 24 * 1024 * 1024
-MAX_TEXT = 150_000
 MAX_IMPORT_TEXT = 5_000_000
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".xml", ".yaml",
                    ".yml", ".log", ".srt", ".vtt", ".rst"}

@@ -22,7 +22,8 @@ from starlette.requests import ClientDisconnect
 from catalog import ARABIC_SAMPLES, DIALECTS, EMOTIONS, FLAGS, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, REFERENCE_VOICES, SPEAKERS, TASHKIL, controls, defaults, settings_from
 from catalog import CHATTERBOX_LANGUAGES, HIGGS_MODELS, REFERENCE_MODELS, REQUIRED_REFERENCE, TRANSCRIPT_MODELS
 from demo_voices import CLIPS, COLLECTION_CLIPS, edited_transcript, reference_filename, transcript_record, voice_collections
-from documents import IMPORT_EXTENSIONS, MAX_BYTES, MAX_IMPORT_TEXT, MAX_TEXT, import_document
+from documents import IMPORT_EXTENSIONS, MAX_BYTES, MAX_IMPORT_TEXT, import_document
+from generation_limits import RUN_CHAR_LIMIT, split_runs
 from queue_worker import Worker
 from notification_events import device_id, enqueue, speech_event
 from push_delivery import Endpoint, PushDelivery, Subscription, valid_endpoint, valid_key
@@ -79,7 +80,7 @@ templates.env.globals.update(models=MODELS, dialects=DIALECTS, languages=QWEN_LA
                              flags=FLAGS, controls=controls, tashkil=TASHKIL,
                              index_languages=INDEX_LANGUAGES, chatterbox_languages=CHATTERBOX_LANGUAGES, higgs_models=HIGGS_MODELS,
                              emotions=EMOTIONS, arabic_samples=ARABIC_SAMPLES,
-                             import_extensions=",".join(IMPORT_EXTENSIONS), max_text=MAX_TEXT,
+                             import_extensions=",".join(IMPORT_EXTENSIONS), max_text=RUN_CHAR_LIMIT,
                              max_import_text=MAX_IMPORT_TEXT, max_document_bytes=MAX_BYTES,
                              studio_js_version=studio_js_version, studio_css_version=studio_css_version,
                              transcript_models=TRANSCRIPT_MODELS,
@@ -170,7 +171,9 @@ def decode_jobs(items):
 
 
 def history(uid, project=None, limit=24):
-    return decode_jobs(rows("""SELECT j.*, p.name AS project_name FROM jobs j LEFT JOIN projects p ON p.id=j.project_id
+    return decode_jobs(rows("""SELECT j.id,j.user_id,j.project_id,j.model,j.title,j.settings,j.status,j.phase,
+        j.done,j.total,j.cancel,j.error,j.duration,j.created,j.updated,j.queue_ahead,p.name AS project_name
+        FROM jobs j LEFT JOIN projects p ON p.id=j.project_id
         WHERE j.user_id=? AND (? IS NULL OR j.project_id=?) ORDER BY j.created DESC,j.rowid DESC LIMIT ?""",
                             (uid, project, project, limit)))
 
@@ -626,15 +629,41 @@ def notify_voice(response, voice, queue=False):
     return response
 
 
+def import_run_titles(form, text, parts, title):
+    try:
+        plan = json.loads(form.get("import_range", "null"))
+        if not isinstance(plan, dict) or form.get("title") != plan.get("label"):
+            return None
+        book = plan["book"][:85]
+        mode = plan["mode"]
+        spans = plan["spans"]
+        if mode not in {"ch", "sc", "pg"} or not 1 <= len(spans) <= 2500:
+            return None
+        result = []
+        for start, end, _ in parts:
+            lo = len(text[:start].encode("utf-16-le")) // 2
+            hi = lo + len(text[start:end].encode("utf-16-le")) // 2
+            labels = [str(item[2])[:20] for item in spans
+                      if len(item) == 3 and int(item[0]) < hi and int(item[1]) > lo]
+            if not labels:
+                return None
+            suffix = f"-{mode}{labels[0]}" + (f"-{labels[-1]}" if labels[0] != labels[-1] else "")
+            result.append(book[:100 - len(suffix)] + suffix)
+        if len(set(result)) != len(result):
+            result = [f"{name[:86]} ({i + 1} of {len(result)})" for i, name in enumerate(result)]
+        return result
+    except (TypeError, KeyError, ValueError, OverflowError):
+        return None
+
+
 @app.post("/jobs")
 async def create_job(request: Request):
     uid = current_user(request)["id"]
-    async with request.form(max_files=2, max_fields=100, max_part_size=MAX_TEXT * 4) as form:
+    async with request.form(max_files=2, max_fields=100, max_part_size=MAX_IMPORT_TEXT * 4) as form:
         model = form.get("model", "")
         if model not in MODELS:
             return submit_error(request, "Choose a TTS model.")
-        key = uuid.uuid4().hex
-        folder = JOBS / key
+        folders = []
         saved_voice = None
         try:
             config = settings_from(form, model)
@@ -652,10 +681,12 @@ async def create_job(request: Request):
             if is_preset:
                 title = name_from(form, "preset_name")
             else:
-                text = form.get("script", "").strip()
-                if not text or len(text) > MAX_TEXT:
-                    raise ValueError("Enter between 1 and 150,000 characters of text.")
-                title = name_from(form, "title", " ".join(text.split())[:60])
+                text = form.get("script", "").replace("\r\n", "\n").replace("\r", "\n").strip()
+                if not text or len(text) > MAX_IMPORT_TEXT:
+                    raise ValueError("Enter between 1 and 5,000,000 characters of text.")
+                title = name_from(form, "title", " ".join(text[:120].split())[:60])
+                parts = list(split_runs(text))
+                titles = import_run_titles(form, text, parts, title)
             if model in REFERENCE_MODELS and isinstance(reference, UploadFile) and reference.filename:
                 selected_voice = await run_in_threadpool(store_voice, uid, reference)
                 config["voice_id"] = selected_voice
@@ -683,28 +714,49 @@ async def create_job(request: Request):
                                (uid, title, model, json.dumps(config)))
                 response = render(request, "notice.html", message=f"Saved preset {title}. Find it under Library.", error=False)
                 return notify_voice(response, saved_voice)
-            folder.mkdir()
-            if model in REFERENCE_MODELS:
-                dest = folder / "reference.wav"
-                if selected_voice:
-                    shutil.copyfile(reference_file(uid, selected_voice), dest)
-            if emotion_voice:
-                shutil.copyfile(reference_file(uid, emotion_voice), folder / "emotion.wav")
+            reference_path = reference_file(uid, selected_voice) if model in REFERENCE_MODELS and selected_voice else None
+            emotion_path = reference_file(uid, emotion_voice) if emotion_voice else None
+            for _ in parts:
+                folder = JOBS / uuid.uuid4().hex
+                folder.mkdir()
+                folders.append(folder)
+                if reference_path:
+                    shutil.copyfile(reference_path, folder / "reference.wav")
+                if emotion_path:
+                    shutil.copyfile(emotion_path, folder / "emotion.wav")
             with connect() as db:
                 db.execute("BEGIN IMMEDIATE")
                 ahead = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('running','queued')").fetchone()[0]
                 requester = device_id(request.cookies.get("speech_device"))
-                db.execute("INSERT INTO jobs(id,user_id,project_id,model,title,script,settings,status,queue_ahead,request_device) "
-                           "VALUES (?,?,?,?,?,?,?,'queued',?,?)",
-                           (key, uid, project, model, title, text, json.dumps(config), ahead, requester))
+                tab = form.get("request_tab", "")[:64] or None
+                batch_id = uuid.uuid4().hex if len(parts) > 1 else None
+                running = db.execute("SELECT user_id,request_device,request_tab FROM jobs active "
+                                     "WHERE active.status='running' AND EXISTS (SELECT 1 FROM jobs pending "
+                                     "WHERE pending.status='queued' AND pending.batch_id=active.batch_id)").fetchone()
+                priority = bool(running and len(text) < 150_000 and
+                                (running["user_id"] != uid or running["request_device"] != requester
+                                 or (tab and running["request_tab"] and tab != running["request_tab"])))
+                if priority:
+                    ahead = db.execute("SELECT COUNT(*) FROM jobs WHERE status='running' OR "
+                                       "(status='queued' AND queue_priority=1)").fetchone()[0]
+                settings_json = json.dumps(config)
+                for index, (folder, (_, _, part)) in enumerate(zip(folders, parts)):
+                    suffix = f" ({index + 1} of {len(parts)})" if len(parts) > 1 else ""
+                    run_title = titles[index] if titles else title[:100 - len(suffix)] + suffix
+                    db.execute("INSERT INTO jobs(id,user_id,project_id,model,title,script,settings,status,queue_ahead,"
+                               "request_device,batch_id,request_tab,queue_priority) VALUES (?,?,?,?,?,?,?,'queued',?,?,?,?,?)",
+                               (folder.name, uid, project, model, run_title, part, settings_json, ahead + index,
+                                requester, batch_id, tab, int(priority)))
                 if ahead:
-                    speech_event(db, {"id": key, "user_id": uid, "title": title, "model": model,
+                    speech_event(db, {"id": folders[0].name, "user_id": uid, "title": title, "model": model,
                                       "request_device": requester}, "queued", ahead=ahead)
         except (ValueError, OSError, sqlite3.IntegrityError, HTTPException) as exc:
-            shutil.rmtree(folder, ignore_errors=True)
+            for folder in folders:
+                shutil.rmtree(folder, ignore_errors=True)
             return submit_error(request, str(exc))
     if request.headers.get("HX-Request"):
-        response = render(request, "notice.html", message="Job added to the queue.", error=False)
+        message = f"{len(parts)} runs added to the queue." if len(parts) > 1 else "Job added to the queue."
+        response = render(request, "notice.html", message=message, error=False)
         return notify_voice(response, saved_voice, queue=True)
     return RedirectResponse("/", 303)
 

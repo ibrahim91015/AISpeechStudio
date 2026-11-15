@@ -55,7 +55,7 @@
     {% if presets %}<label>Saved preset <select id="load-preset"><option value="">Choose a preset</option>{% for preset in presets %}<option value="{{ preset.id }}">{{ preset.name }}</option>{% endfor %}</select></label>{% endif %}
   </section>
   <div class="submit-row">
-    <button class="button primary" type="submit" name="intent" value="generate"><svg class="play-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 9 6-9 6z"/></svg>Generate audio</button>
+    <button class="button primary" type="submit" name="intent" value="generate"><svg class="play-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 9 6-9 6z"/></svg><span id="generate-label">Generate audio</span></button>
     <span class="inline-message" id="notice" aria-live="polite"></span>
     {% with upload_id='submission-progress', upload_label='Uploading script and reference' %}{% include 'upload_progress.html' %}{% endwith %}
   </div>
