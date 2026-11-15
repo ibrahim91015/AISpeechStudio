@@ -18,6 +18,12 @@ DIALECTS = {
 }
 BUILTIN_VOICES = {key: (value[0], value[1]) for key, value in DIALECTS.items() if value[1]}
 BUILTIN_VOICES["eg-alt"] = ("Egyptian · Alternate recording", "egypt-ref.wav")
+INDEX_ENGLISH_VOICES = {
+    "en-us-joe": ("Joe · male", "index-en-us-joe.flac"),
+    "en-us-mike": ("Mike · male", "index-en-us-mike.flac"),
+    "en-us-kathleen": ("Kathleen · female", "index-en-us-kathleen.flac"),
+}
+REFERENCE_VOICES = BUILTIN_VOICES | INDEX_ENGLISH_VOICES
 ARABIC_SAMPLES = {
     "eg": ("صباح الفل، تعالى نحكي عن أول يوم في الرحلة.", "خلي القهوة هنا، أنا راجع بعد شوية."),
     "sa": ("خذ راحتك، السالفة توها بادية.", "تعال نقعد شوي ونشرب قهوة."),
@@ -68,25 +74,29 @@ QWEN = {
 }
 INDEX_GENERATION = {
     "temperature": Control("Temperature", .8, .1, 2, .1),
-    "top_k": Control("Top-k", 30, 0, 100, 1),
-    "top_p": Control("Top-p", .8, 0, 1, .01),
+    "top_k": Control("Top-k", 35, 0, 100, 1),
+    "top_p": Control("Top-p", .88, 0, 1, .01),
     "num_beams": Control("Beam count", 3, 1, 10, 1),
-    "repetition_penalty": Control("Repetition penalty", 10., .1, 20, .1),
+    "repetition_penalty": Control("Repetition penalty", 6., .1, 20, .1),
     "length_penalty": Control("Length penalty", 0., -2, 2, .1),
     "max_mel_tokens": Control("Max mel tokens", 1500, 50, 1815, 1),
 }
 INDEX = {**INDEX_GENERATION, "max_text_tokens": Control("Max text tokens per segment", 120, 20, 600, 1),
          "segment_pause": Control("Pause inside a chunk (ms)", 200, 0, 3000, 1),
          "duration_factor": Control("Duration multiplier", 1., .5, 2, .01),
-         "emo_alpha": Control("Emotion strength", .65, 0, 1, .01)}
+         "emo_alpha": Control("Emotion strength", .50, 0, 1, .01)}
 COMMON = {"seed": Control("Seed (0 varies)", 42, 0, 4294967295, 1),
           "pause_ms": Control("Pause between chunks (ms)", 450, 0, 3000, 10)}
 FLAGS = {"do_sample": "Sample main talker", "subtalker_dosample": "Sample sub-talker"}
 
 
 def controls(model):
-    chunk = Control("Characters per chunk", 220, 80, 280, 1) if model == "lahgtna" else Control("Characters per chunk", 320, 80, 900, 1)
-    return {**{"lahgtna": ARABIC, "qwen": QWEN, "index": INDEX}[model], **COMMON, "chunk_size": chunk}
+    chunk_size, max_chunk_size = {"lahgtna": (220, 280), "qwen": (320, 900), "index": (400, 900)}[model]
+    chunk = Control("Characters per chunk", chunk_size, 80, max_chunk_size, 1)
+    result = {**{"lahgtna": ARABIC, "qwen": QWEN, "index": INDEX}[model], **COMMON, "chunk_size": chunk}
+    if model == "index":
+        result["pause_ms"] = Control("Pause between chunks (ms)", 260, 0, 3000, 10)
+    return result
 
 
 def defaults(model):

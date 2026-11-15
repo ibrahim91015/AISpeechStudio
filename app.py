@@ -18,7 +18,7 @@ from starlette.datastructures import UploadFile
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
-from catalog import ARABIC_SAMPLES, BUILTIN_VOICES, DIALECTS, EMOTIONS, FLAGS, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, SPEAKERS, TASHKIL, controls, defaults, settings_from
+from catalog import ARABIC_SAMPLES, BUILTIN_VOICES, DIALECTS, EMOTIONS, FLAGS, INDEX_ENGLISH_VOICES, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, REFERENCE_VOICES, SPEAKERS, TASHKIL, controls, defaults, settings_from
 from documents import IMPORT_EXTENSIONS, MAX_TEXT, import_document
 from queue_worker import Worker
 import shares
@@ -56,7 +56,8 @@ trusted_origins = {origin.strip().rstrip("/").lower()
                    for origin in os.getenv("TTS_TRUSTED_ORIGINS", "").split(",") if origin.strip()}
 templates.env.globals.update(models=MODELS, dialects=DIALECTS, languages=QWEN_LANGUAGES, speakers=SPEAKERS,
                              flags=FLAGS, controls=controls, tashkil=TASHKIL, builtin_voices=BUILTIN_VOICES,
-                             index_languages=INDEX_LANGUAGES, emotions=EMOTIONS, arabic_samples=ARABIC_SAMPLES,
+                             index_languages=INDEX_LANGUAGES, english_voices=INDEX_ENGLISH_VOICES,
+                             emotions=EMOTIONS, arabic_samples=ARABIC_SAMPLES,
                              import_extensions=",".join(IMPORT_EXTENSIONS), max_text=MAX_TEXT,
                              studio_js_version=studio_js_version)
 
@@ -87,7 +88,7 @@ def reference_file(uid, key):
     if not isinstance(key, str):
         return None
     if key.startswith("dialect:"):
-        builtin = BUILTIN_VOICES.get(key.removeprefix("dialect:"))
+        builtin = REFERENCE_VOICES.get(key.removeprefix("dialect:"))
         return REFERENCES / builtin[1] if builtin else None
     if key.startswith("previous:"):
         job = key.removeprefix("previous:")
@@ -229,7 +230,7 @@ async def extract_text(request: Request):
 
 @app.get("/references/{dialect}")
 def reference_audio(dialect: str):
-    config = BUILTIN_VOICES.get(dialect)
+    config = REFERENCE_VOICES.get(dialect)
     if not config:
         raise HTTPException(404, "No reference for this dialect.")
     return FileResponse(REFERENCES / config[1])

@@ -1,5 +1,6 @@
 {% macro options(selected) -%}
   {% if voices %}<optgroup label="Uploaded voices">{% for voice in voices %}<option value="{{ voice.id }}"{% if selected == voice.id %} selected{% endif %}>{{ voice.name }}</option>{% endfor %}</optgroup>{% endif %}
+  {% if model == 'index' %}<optgroup label="American English references">{% for key, voice in english_voices.items() %}<option value="dialect:{{ key }}"{% if selected == ('dialect:' ~ key) %} selected{% endif %}>{{ voice[0] }}</option>{% endfor %}</optgroup>{% endif %}
   <optgroup label="Built-in dialect voices">{% for key, voice in builtin_voices.items() %}<option value="dialect:{{ key }}"{% if selected == ('dialect:' ~ key) %} selected{% endif %}>{{ voice[0] }}</option>{% endfor %}</optgroup>
 {%- endmacro %}
 <label>Reference voice
@@ -19,6 +20,7 @@
 <small id="reference-status" aria-live="polite" hidden></small>
 {% with upload_id='reference-upload-progress', upload_label='Uploading reference audio' %}{% include 'upload_progress.html' %}{% endwith %}
 {% if model == 'index' %}
+  <small>IndexTTS uses the first 15 seconds of a reference. Use a clear clip of one speaker and choose Speaker voice to follow the original delivery.</small>
   <label>Emotion source
     <select name="emo_mode" id="emotion-mode">
       {% for key, label in [('speaker','Speaker voice'), ('audio','Separate reference audio'), ('vector','Emotion sliders'), ('text','Text description')] %}

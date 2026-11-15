@@ -1,6 +1,6 @@
 # AI Speech Studio
 
-A local GPU speech studio for Lahgtna Chatterbox and Qwen3-TTS 12 Hz 1.7B CustomVoice. It uses FastAPI, Jinja, vendored HTMX, and a SQLite queue and library.
+A local GPU speech studio for Lahgtna Chatterbox, Qwen3-TTS 12 Hz 1.7B CustomVoice, and IndexTTS 2.5. It uses FastAPI, Jinja, vendored HTMX, and a SQLite queue and library.
 
 ## Service
 
@@ -15,6 +15,20 @@ Anyone who can reach the port can use the app. Profiles organize the library. Mi
 - IndexTTS 2.5 loads its [official checkpoint](https://huggingface.co/IndexTeam/IndexTTS-2.5) from `../models/IndexTTS-2.5`. Its isolated `.runtime/index` environment uses the upstream lockfile at `d9e41aac89fd00b3d71497fddb287b7f24613712`. Auxiliary weights are cached beside the checkpoint.
 - Lahgtna auto-detection uses `../models/dialect-router-v0.1` on CPU. Its built-in reference clips come from revision `25e5e82` of the [reference Space](https://huggingface.co/spaces/oddadmix/lahgtna-chatterbox-demo/tree/25e5e82).
 - Python 3.11 environments live in `.runtime/web`, `.runtime/lahgtna`, and `.runtime/qwen`. Use the corresponding requirements files. The model environments use `torch==2.6.0+cu124` and `torchaudio==2.6.0+cu124` from the PyTorch CUDA 12.4 index. FFmpeg is required.
+
+### IndexTTS American English references
+
+The clips in `data/references` are original single-speaker recordings from speech synthesis datasets released under CC0 1.0. They were trimmed at the edges, converted to mono 24 kHz lossless FLAC, and peak-adjusted. The two-utterance references have a brief pause at the join.
+
+| Reference | Dataset and original clip IDs | Duration |
+| --- | --- | ---: |
+| Joe | [Open Home Foundation Joe](https://mozilladatacollective.com/datasets/cmid3cyuy00gnnv07mo54373n), `0000000105` | 9.2 s |
+| Mike | [Open Home Foundation voice datasets](https://github.com/OHF-Voice/voice-datasets), `0000000198` and `0000000190` | 8.6 s |
+| Kathleen | [Rhasspy Voice Dataset](https://github.com/rhasspy/dataset-voice-kathleen/tree/c51cb971036a127359b43c621f26ca5081eab13e), `arctic_a0022_1592748054` and `arctic_a0023_1592748016` | 8.9 s |
+
+IndexTTS uses the first 15 seconds of the speaker reference. **Speaker voice** uses that recording for both timbre and delivery. Text or audio emotion guidance can be enabled separately. The [maintainers recommend](https://github.com/index-tts/index-tts#-inference) keeping text emotion strength around 0.6 or lower for natural speech.
+
+The Studio defaults keep three beams and temperature 0.8, with top-p 0.88, top-k 35, and repetition penalty 6. Four decoding configurations were compared on the same English script and the three references above using SpeechBrain ECAPA cosine similarity, Whisper word error, and UTMOS estimated naturalness. This combination gave the closest average voice match among the tested settings with similar estimated naturalness to the upstream defaults.
 
 ## Queue and storage
 
