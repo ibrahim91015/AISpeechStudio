@@ -234,7 +234,7 @@ document.addEventListener('click', (event) => {
 
 document.addEventListener('htmx:beforeSwap', (event) => {
   const target = event.detail.target;
-  if (target?.id !== 'activity' || !event.detail.xhr.responseURL.endsWith('/activity')) return;
+  if (target?.id !== 'activity') return;
   const next = new DOMParser().parseFromString(event.detail.serverResponse, 'text/html').querySelector('#activity');
   const list = target.querySelector('.job-list');
   const nextList = next?.querySelector('.job-list');
@@ -249,13 +249,18 @@ document.addEventListener('htmx:beforeSwap', (event) => {
     if (!old) {
       list.prepend(row);
       htmx.process(row);
-    } else if (old.innerHTML !== row.innerHTML && !old.contains(document.activeElement)) {
-      old.replaceWith(row);
-      htmx.process(row);
-    } else if (old.contains(document.activeElement)) {
-      const current = old.querySelector('.job-progress');
-      const replacement = row.querySelector('.job-progress');
-      if (current && replacement && current.innerHTML !== replacement.innerHTML) current.replaceWith(replacement);
+    } else if (old.innerHTML !== row.innerHTML || old.dataset.status !== row.dataset.status) {
+      const focused = old.contains(document.activeElement);
+      const nextProgress = row.querySelector('.job-progress');
+      if (focused && nextProgress) {
+        old.dataset.status = row.dataset.status;
+        const progress = old.querySelector('.job-progress');
+        if (progress && progress.innerHTML !== nextProgress.innerHTML) progress.replaceWith(nextProgress);
+      } else {
+        old.replaceWith(row);
+        htmx.process(row);
+        if (focused) row.querySelector('a, button')?.focus();
+      }
     }
   }
   for (const row of existing.values()) {
