@@ -19,7 +19,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
 from catalog import ARABIC_SAMPLES, BUILTIN_VOICES, DIALECTS, EMOTIONS, FLAGS, INDEX_ENGLISH_VOICES, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, REFERENCE_VOICES, SPEAKERS, TASHKIL, controls, defaults, settings_from
-from catalog import CHATTERBOX_LANGUAGES, HIGGS_MODELS, REFERENCE_MODELS, REFERENCE_TRANSCRIPTS, REQUIRED_REFERENCE
+from catalog import CHATTERBOX_LANGUAGES, HIGGS_MODELS, REFERENCE_MODELS, REQUIRED_REFERENCE
+from demo_voices import CLIPS, transcript_for, voice_collections
 from documents import IMPORT_EXTENSIONS, MAX_TEXT, import_document
 from queue_worker import Worker
 import shares
@@ -61,7 +62,7 @@ trusted_origins = {origin.strip().rstrip("/").lower()
 templates.env.globals.update(models=MODELS, dialects=DIALECTS, languages=QWEN_LANGUAGES, speakers=SPEAKERS,
                              flags=FLAGS, controls=controls, tashkil=TASHKIL, builtin_voices=BUILTIN_VOICES,
                              index_languages=INDEX_LANGUAGES, chatterbox_languages=CHATTERBOX_LANGUAGES, higgs_models=HIGGS_MODELS,
-                             reference_transcripts=REFERENCE_TRANSCRIPTS, english_voices=INDEX_ENGLISH_VOICES,
+                             demo_collections=voice_collections, english_voices=INDEX_ENGLISH_VOICES,
                              emotions=EMOTIONS, arabic_samples=ARABIC_SAMPLES,
                              import_extensions=",".join(IMPORT_EXTENSIONS), max_text=MAX_TEXT,
                              studio_js_version=studio_js_version, studio_css_version=studio_css_version)
@@ -92,6 +93,8 @@ def current_user(request):
 def reference_file(uid, key):
     if not isinstance(key, str):
         return None
+    if key.startswith("demo:"):
+        return CLIPS.get(key.removeprefix("demo:"), {}).get("path")
     if key.startswith("dialect:"):
         builtin = REFERENCE_VOICES.get(key.removeprefix("dialect:"))
         return REFERENCES / builtin[1] if builtin else None
@@ -163,7 +166,7 @@ def health():
 
 @app.get("/", response_class=HTMLResponse)
 def studio(request: Request, model: str = "qwen", preset: int | None = None, reuse: str | None = None,
-           uploaded_voice: str = "", uploaded_emotion: str = ""):
+           uploaded_voice: str = "", uploaded_emotion: str = "", sample_voice: str = ""):
     uid = current_user(request)["id"]
     saved = one("SELECT * FROM presets WHERE id=? AND user_id=?", (preset, uid)) if preset else None
     previous = job_for(uid, reuse) if reuse else None
@@ -181,12 +184,23 @@ def studio(request: Request, model: str = "qwen", preset: int | None = None, reu
         config["voice_id"] = previous_voice
     if config.get("emo_voice") and not reference_file(uid, config["emo_voice"]):
         config["emo_voice"] = ""
+    if (model in REFERENCE_MODELS and sample_voice.startswith(("demo:", "dialect:"))
+            and reference_file(uid, sample_voice)):
+        config["voice_id"] = sample_voice
+        clip = CLIPS.get(sample_voice.removeprefix("demo:"), {})
+        if model in {"index", "chatterbox"} and clip.get("language_code"):
+            config["language"] = clip["language_code"]
+        if model == "qwen_base" and not transcript_for(sample_voice):
+            config["x_vector_only"] = True
+    else:
+        sample_voice = ""
     if model in REFERENCE_MODELS and uploaded_voice and reference_file(uid, uploaded_voice):
         config["voice_id"] = uploaded_voice
     if model == "index" and uploaded_emotion and reference_file(uid, uploaded_emotion):
         config.update(emo_mode="audio", emo_voice=uploaded_emotion)
     return render(request, "studio.html", page="studio", model=model, config=config, reused=previous, previous_voice=previous_voice,
-                  text=previous["script"] if previous else "", jobs=history(uid, limit=8), state=health_data(), **lookups(uid))
+                  text=previous["script"] if previous else "", sample_voice=sample_voice,
+                  jobs=history(uid, limit=8), state=health_data(), **lookups(uid))
 
 
 @app.get("/controls", response_class=HTMLResponse)
@@ -244,6 +258,15 @@ def reference_audio(dialect: str):
     if not config:
         raise HTTPException(404, "No reference for this dialect.")
     return FileResponse(REFERENCES / config[1])
+
+
+@app.get("/demo-references/{key}/audio")
+def demo_reference_audio(key: str, download: bool = False):
+    clip = CLIPS.get(key)
+    if not clip:
+        raise HTTPException(404, "Reference recording not found.")
+    return FileResponse(clip["path"], media_type="audio/flac",
+                        filename=clip["file"] if download else None)
 
 
 @app.post("/voices/upload")
@@ -412,7 +435,7 @@ async def create_job(request: Request):
             if model in REQUIRED_REFERENCE and not selected_voice:
                 raise ValueError(f"Choose or upload a reference voice for {MODELS[model]}.")
             if model == "qwen_base" and not config["x_vector_only"]:
-                if not (config["reference_text"] or REFERENCE_TRANSCRIPTS.get(selected_voice)):
+                if not (config["reference_text"] or transcript_for(selected_voice)):
                     raise ValueError("Enter the reference transcript or enable Clone without transcript.")
             if model in HIGGS_MODELS and not selected_voice and config["reference_text"]:
                 raise ValueError("Choose the recording that matches the reference transcript.")

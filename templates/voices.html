@@ -49,4 +49,27 @@
     </div>
   </section>
 </div>
+<section class="reference-collections" aria-labelledby="official-references">
+  <div class="section-head"><h2 id="official-references">Reference collections</h2></div>
+  {% for collection in demo_collections(with_originals=true) %}
+    <details class="surface reference-collection">
+      <summary><strong>{{ collection.label }}</strong><span class="counter">{{ collection.clips|length }} clips</span></summary>
+      {% if collection.key == 'vctk' %}
+        <p class="reference-attribution">University of Edinburgh CSTR recordings by Junichi Yamagishi, Christophe Veaux, and Kirsten MacDonald. <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>.</p>
+      {% endif %}
+      <div class="voice-list reference-clips">
+        {% for clip in collection.clips %}
+          <article class="voice-card">
+            <div class="voice-meta"><h3>{{ clip.name }}</h3><small>{{ clip.language }}{% if clip.duration %} · {{ '%.1f'|format(clip.duration) }} s{% endif %}</small></div>
+            <audio controls preload="none" src="{{ clip.audio_url }}" aria-label="Play {{ clip.name }}"></audio>
+            <div class="voice-actions">
+              <a class="quiet" href="/?model={{ collection.studio_model }}&amp;sample_voice={{ clip.key|urlencode }}">Use in Studio</a>
+              <a class="quiet" href="{{ clip.source or collection.source }}" target="_blank" rel="noopener">Source</a>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    </details>
+  {% endfor %}
+</section>
 {% endblock %}

@@ -4,6 +4,8 @@
 <form id="studio-voice-upload" action="/voices/upload" method="post" enctype="multipart/form-data"></form>
 <form id="studio-emotion-upload" action="/voices/upload" method="post" enctype="multipart/form-data"></form>
 <form class="studio-grid" action="/jobs" method="post" enctype="multipart/form-data" autocomplete="off"
+      data-sample-voice="{{ sample_voice }}" data-sample-language="{{ config.language if sample_voice and model in ('index', 'chatterbox') else '' }}"
+      data-sample-embedding-only="{{ '1' if config.x_vector_only else '0' }}"
       data-uploaded-voice="{{ request.query_params.get('uploaded_voice', '') }}" data-uploaded-emotion="{{ request.query_params.get('uploaded_emotion', '') }}"
       hx-post="/jobs" hx-encoding="multipart/form-data" hx-target="#notice" hx-disabled-elt="find button[value=generate], find button[value=preset]" id="speech-form" data-upload-progress="submission-progress">
   <input type="hidden" name="reused" value="{{ reused.id if reused else '' }}">

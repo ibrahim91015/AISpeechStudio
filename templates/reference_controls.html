@@ -1,6 +1,11 @@
 {% macro options(selected) -%}
   {% if voices %}<optgroup label="Uploaded voices">{% for voice in voices %}<option value="{{ voice.id }}"{% if selected == voice.id %} selected{% endif %}>{{ voice.name }}</option>{% endfor %}</optgroup>{% endif %}
   {% if model != 'lahgtna' %}<optgroup label="American English references">{% for key, voice in english_voices.items() %}<option value="dialect:{{ key }}"{% if selected == ('dialect:' ~ key) %} selected{% endif %}>{{ voice[0] }}</option>{% endfor %}</optgroup>{% endif %}
+  {% for collection in demo_collections(preferred=model) %}
+    <optgroup label="{{ collection.label }} reference clips">
+      {% for clip in collection.clips %}<option value="{{ clip.key }}"{% if selected == clip.key %} selected{% endif %}>{{ clip.name }}</option>{% endfor %}
+    </optgroup>
+  {% endfor %}
   <optgroup label="Built-in dialect voices">{% for key, voice in builtin_voices.items() %}<option value="dialect:{{ key }}"{% if selected == ('dialect:' ~ key) %} selected{% endif %}>{{ voice[0] }}</option>{% endfor %}</optgroup>
 {%- endmacro %}
 <label>Reference voice

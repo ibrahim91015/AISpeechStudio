@@ -14,7 +14,7 @@
     {% include 'reference_controls.html' %}
     {% if model != 'chatterbox' %}
       <label>Reference transcript <textarea name="reference_text" rows="3" maxlength="2048" placeholder="The words spoken in the reference clip">{{ config.reference_text }}</textarea></label>
-      <small>Joe and Mike already have transcripts. Leave this blank to use theirs automatically.</small>
+      <small>Clips with a published transcript use it automatically when this field is blank.</small>
     {% endif %}
     {% if model == 'qwen_base' %}
       <label class="check"><input type="checkbox" name="x_vector_only" value="1"{% if config.x_vector_only %} checked{% endif %}>Clone without transcript</label>

@@ -164,7 +164,8 @@ function previewReference() {
     if (!select || !audio) continue;
     const voice = select.value || (dialect?.value && dialect.value !== 'auto' ? 'dialect:' + dialect.value : '');
     const src = voice.startsWith('dialect:') ? '/references/' + voice.slice(8) :
-      voice.startsWith('previous:') ? '/jobs/' + voice.slice(9) + '/reference' :
+      voice.startsWith('demo:') ? '/demo-references/' + encodeURIComponent(voice.slice(5)) + '/audio' :
+        voice.startsWith('previous:') ? '/jobs/' + voice.slice(9) + '/reference' :
         (voice ? '/voices/' + voice + '/audio?reference=true' : '');
     audio.hidden = !src;
     if (src && audio.getAttribute('src') !== src) audio.src = src;
@@ -277,8 +278,17 @@ if (editor) {
   restore(studioForm, draft.common);
   const current = studioFields.firstElementChild.dataset.model;
   restore(studioFields, draft.models[current]);
-  const uploadedVoice = document.querySelector('#voice-id option[value="' + CSS.escape(studioForm.dataset.uploadedVoice) + '"]');
-  if (studioForm.dataset.uploadedVoice && uploadedVoice) uploadedVoice.selected = true;
+  const incomingVoice = studioForm.dataset.uploadedVoice || studioForm.dataset.sampleVoice;
+  const option = studioFields.querySelector('#voice-id option[value="' + CSS.escape(incomingVoice) + '"]');
+  if (incomingVoice && option) option.selected = true;
+  if (studioForm.dataset.sampleVoice && option) {
+    const language = studioFields.querySelector('[name=language]');
+    const transcript = studioFields.querySelector('[name=reference_text]');
+    const embeddingOnly = studioFields.querySelector('[name=x_vector_only]');
+    if (language && studioForm.dataset.sampleLanguage) language.value = studioForm.dataset.sampleLanguage;
+    if (transcript) transcript.value = '';
+    if (embeddingOnly) embeddingOnly.checked = studioForm.dataset.sampleEmbeddingOnly === '1';
+  }
   const uploadedEmotion = document.querySelector('#emotion-voice option[value="' + CSS.escape(studioForm.dataset.uploadedEmotion) + '"]');
   if (studioForm.dataset.uploadedEmotion && uploadedEmotion) {
     uploadedEmotion.selected = true;

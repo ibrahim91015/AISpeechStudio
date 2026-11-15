@@ -7,7 +7,8 @@ import random
 import sys
 from pathlib import Path
 
-from catalog import ARABIC, CHATTERBOX, DIALECTS, FLAGS, HIGGS_MODELS, INDEX_GENERATION, QWEN, REFERENCE_TRANSCRIPTS
+from catalog import ARABIC, CHATTERBOX, DIALECTS, FLAGS, HIGGS_MODELS, INDEX_GENERATION, QWEN
+from demo_voices import transcript_for
 from storage import AISPEECH, REFERENCES, ROOT
 
 
@@ -130,7 +131,7 @@ def prepare(kind, model, data, state):
 
 
 def reference_transcript(settings):
-    return settings.get("reference_text") or REFERENCE_TRANSCRIPTS.get(settings.get("voice_id"), "")
+    return settings.get("reference_text") or transcript_for(settings.get("voice_id"))
 
 
 def render(kind, model, data, state):

@@ -193,3 +193,10 @@ progress { width: 100%; height: 8px; }
 @media (max-width: 720px) {
   .stats-inner { padding-inline: 16px; }
 }
+
+.reference-collections { margin-top: 30px; }
+.reference-collection + .reference-collection { margin-top: 12px; }
+.reference-collection > summary .counter { margin-inline-start: 10px; }
+.reference-attribution { margin-top: 14px; }
+.reference-clips { grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); gap: 20px; margin-top: 18px; }
+.reference-clips audio { width: 100%; }
