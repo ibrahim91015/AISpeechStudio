@@ -236,7 +236,7 @@ function addVoice(option, chosen) {
     const item = new Option(option.name, option.id);
     if (select.id === 'voice-id' && studioFields.querySelector('#reference-transcript')) {
       const transcript = option.transcript || '';
-      item.textContent = (transcript ? '\u2219\u00a0' : '\u2008\u00a0') + option.name;
+      item.textContent = (transcript ? '\u2027\u00a0' : '\u2008\u00a0') + option.name;
       item.dataset.transcript = transcript;
       if (chosen === select.id && !select.value && !transcript) {
         const pending = transcriptValues()[''];
