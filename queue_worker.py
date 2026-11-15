@@ -4,17 +4,22 @@ import logging
 import os
 import re
 import select
+import shutil
+import signal
 import subprocess
 import threading
 import time
 import wave
 import unicodedata
 from contextlib import ExitStack
+from pathlib import Path
 
 from storage import AISPEECH, DATA, JOBS, ROOT, connect, one
 
 
 log = logging.getLogger(__name__)
+MODEL_RUNTIME = {"qwen_base": "qwen", "higgs_bf16": "index", "higgs_q8": "index", "chatterbox": "lahgtna"}
+MIN_DISK_FREE = 1024 ** 3
 IDLE_SECONDS = float(os.getenv("TTS_MODEL_IDLE_SECONDS", "120"))
 
 
@@ -93,14 +98,40 @@ class Worker:
             return
         model = self.model or self.lifecycle[3]
         self.progress("unloading", 0, 2, model)
-        if p.poll() is None:
-            p.terminate()
-            self.progress("unloading", 1, 2, model)
+        try:
+            os.killpg(p.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        self.progress("unloading", 1, 2, model)
+        try:
+            p.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            pass
+        # The native CUDA backend runs in this group and can outlive the Python leader.
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        p.wait()
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
             try:
-                p.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                p.kill()
-                p.wait()
+                os.killpg(p.pid, 0)
+            except ProcessLookupError:
+                break
+            # A terminated grandchild can remain a zombie briefly. It owns no GPU state.
+            for item in Path("/proc").glob("[0-9]*/stat"):
+                try:
+                    state, _, group, *_ = item.read_text().rsplit(")", 1)[1].split()
+                except (OSError, ValueError, IndexError):
+                    continue
+                if group == str(p.pid) and state not in {"Z", "X"}:
+                    break
+            else:
+                break
+            time.sleep(.1)
+        else:
+            raise RuntimeError("The previous TTS process is still exiting. No new model was loaded.")
         p.stdin.close()
         p.stdout.close()
         self.process = self.model = None
@@ -142,11 +173,11 @@ class Worker:
         self.progress("loading", 0, 3, model)
         env = {**os.environ, "HF_HUB_CACHE": str(AISPEECH / "huggingface/hub"), "HF_HUB_OFFLINE": "1",
                "TOKENIZERS_PARALLELISM": "false", "OMP_NUM_THREADS": "2", "PYTHONUNBUFFERED": "1"}
-        python = ROOT / ".runtime" / model / "bin/python"
+        python = ROOT / ".runtime" / MODEL_RUNTIME.get(model, model) / "bin/python"
         with (DATA / "worker.log").open("ab") as dest:
             self.process = subprocess.Popen(
                 [str(python), str(ROOT / "model_worker.py"), model], cwd=ROOT, env=env,
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=dest, text=True, encoding="utf-8", bufsize=1,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=dest, text=True, encoding="utf-8", bufsize=1, start_new_session=True,
             )
         if not self.receive(job, 240).get("ready"):
             raise RuntimeError("The model process failed to start.")
@@ -172,6 +203,8 @@ class Worker:
         chunks = list(chunk_text(script, settings["chunk_size"], preserve_annotations=job["model"] == "index"))
         if not chunks:
             raise ValueError("The text has no spoken content after removing tags.")
+        if shutil.disk_usage(folder).free < MIN_DISK_FREE:
+            raise RuntimeError("Free at least 1 GiB of server disk space before generating audio.")
         self.load(job["model"], key)
         update(key, phase="Preparing voice", total=len(chunks))
         reference = folder / "reference.wav"
@@ -185,6 +218,8 @@ class Worker:
         with ExitStack() as files:
             output = None
             for index, text in enumerate(chunks):
+                if shutil.disk_usage(folder).free < MIN_DISK_FREE:
+                    raise RuntimeError("Generation stopped because the server has less than 1 GiB of free disk space.")
                 self.send(key, {"op": "render", "text": text, "output": str(part), "first": index == 0,
                                 "settings": settings, **prepared})
                 with wave.open(str(part), "rb") as audio:

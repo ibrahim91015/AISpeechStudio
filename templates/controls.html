@@ -5,6 +5,23 @@
   {% elif model == 'index' %}
     <label>Language <select name="language">{% for key, language in index_languages.items() %}<option value="{{ key }}"{% if key == config.language %} selected{% endif %}>{{ language }}</option>{% endfor %}</select></label>
     {% include 'reference_controls.html' %}
+  {% elif model in higgs_models or model in ('qwen_base', 'chatterbox') %}
+    {% if model == 'qwen_base' %}
+      <label>Language <select name="language">{% for language in languages %}<option{% if config.language == language %} selected{% endif %}>{{ language }}</option>{% endfor %}</select></label>
+    {% elif model == 'chatterbox' %}
+      <label>Language <select name="language">{% for key, language in chatterbox_languages.items() %}<option value="{{ key }}"{% if key == config.language %} selected{% endif %}>{{ language }}</option>{% endfor %}</select></label>
+    {% endif %}
+    {% include 'reference_controls.html' %}
+    {% if model != 'chatterbox' %}
+      <label>Reference transcript <textarea name="reference_text" rows="3" maxlength="2048" placeholder="The words spoken in the reference clip">{{ config.reference_text }}</textarea></label>
+      <small>Joe and Mike already have transcripts. Leave this blank to use theirs automatically.</small>
+    {% endif %}
+    {% if model == 'qwen_base' %}
+      <label class="check"><input type="checkbox" name="x_vector_only" value="1"{% if config.x_vector_only %} checked{% endif %}>Clone without transcript</label>
+    {% endif %}
+    {% if model in higgs_models %}
+      <small>Higgs Audio by <a href="https://huggingface.co/bosonai/higgs-tts-3-4b" target="_blank" rel="noopener">Boson AI</a></small>
+    {% endif %}
   {% else %}
     <div class="field-grid">
       <label>Language <select name="language">{% for language in languages %}<option{% if config.language == language %} selected{% endif %}>{{ language }}</option>{% endfor %}</select></label>
@@ -17,12 +34,12 @@
     <div class="field-grid control-numbers">
       {% for key, item in controls(model).items() %}<label>{{ item.label }}<input type="number" name="{{ key }}" value="{{ config[key] }}" min="{{ item.minimum }}" max="{{ item.maximum }}" step="{{ item.step }}" required></label>{% endfor %}
     </div>
-    {% if model == 'qwen' %}
+    {% if model in ('qwen', 'qwen_base') %}
       {% for key, label in flags.items() %}<label class="check"><input type="checkbox" name="{{ key }}" value="1"{% if config[key] %} checked{% endif %}>{{ label }}</label>{% endfor %}
     {% elif model == 'index' %}
       {% for key, label in [('do_sample','Sample speech tokens'), ('text_normalization','Normalize input text'), ('emo_random','Randomize emotion reference')] %}<label class="check"><input type="checkbox" name="{{ key }}" value="1"{% if config[key] %} checked{% endif %}>{{ label }}</label>{% endfor %}
       <label>Glossary for English and Chinese<textarea name="glossary" rows="3" placeholder="One term = spoken form per line">{{ config.glossary }}</textarea></label>
-    {% else %}<label class="check"><input type="checkbox" name="keep_tags" value="1"{% if config.keep_tags %} checked{% endif %}>Keep expression tags</label>{% endif %}
+    {% elif model == 'lahgtna' %}<label class="check"><input type="checkbox" name="keep_tags" value="1"{% if config.keep_tags %} checked{% endif %}>Keep expression tags</label>{% endif %}
   </details>
   <details class="disclosure">
     <summary>Audio export</summary>

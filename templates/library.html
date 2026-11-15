@@ -23,6 +23,10 @@
     {% for p in projects %}<div class="library-item"><a href="/library?project={{ p.id }}">{{ p.name }}</a><form action="/library/projects/{{ p.id }}/delete" method="post"><button class="quiet" aria-label="Remove project {{ p.name }}">Remove</button></form></div>{% endfor %}</section>
     <section class="surface"><h2>Reference voices</h2><p>{{ voices|length }} saved {{ 'clip' if voices|length == 1 else 'clips' }}</p><a href="/voices" class="button tonal">Manage voices</a></section>
     <section class="surface"><h2>Generation presets</h2>{% for p in presets %}<div class="library-item"><a href="/?preset={{ p.id }}">{{ p.name }}</a><form action="/library/presets/{{ p.id }}/delete" method="post"><button class="quiet" aria-label="Remove preset {{ p.name }}">Remove</button></form></div>{% else %}<p>Save a preset from Voice &amp; settings in the studio.</p>{% endfor %}</section>
+    <section class="surface"><h2>Display</h2>
+      <label class="check"><input type="checkbox" id="live-stats-toggle" aria-describedby="live-stats-help">Show live server usage</label>
+      <p id="live-stats-help">Show temperatures, utilization, and memory at the top of every page in this browser.</p>
+    </section>
     <section class="surface" id="profiles"><h2>Profiles</h2>
       <form action="/profiles/select" method="post" class="add-form">
         <label class="sr-only" for="profile-choice">Current profile</label><select name="profile" id="profile-choice" data-autosubmit>{% for p in profiles %}<option value="{{ p.id }}"{% if profile.id == p.id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>

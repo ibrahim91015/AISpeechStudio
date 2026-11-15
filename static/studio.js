@@ -529,3 +529,60 @@ document.addEventListener('htmx:afterSwap', (event) => {
     scheduleSave();
   }
 });
+
+(() => {
+  const banner = document.querySelector('#system-stats');
+  if (!banner) return;
+  const toggle = document.querySelector('#live-stats-toggle');
+  const key = 'aispeech-live-stats';
+  let enabled = false;
+  let pending = false;
+  let timer;
+  try { enabled = localStorage.getItem(key) === '1'; } catch {}
+  const formatDevice = device => [
+    device?.utilization == null ? 'Utilization unavailable' : device.utilization + '%',
+    device?.temperature == null ? 'Temp unavailable' : device.temperature + ' °C',
+  ].join(' · ');
+  const gib = bytes => (bytes / 1073741824).toFixed(1);
+  const formatMemory = memory => memory ?
+    gib(memory.used) + ' GiB used · ' + gib(memory.free) + ' GiB free · ' + memory.percent + '%' : 'Unavailable';
+  const show = (name, value) => { banner.querySelector('[data-stat="' + name + '"]').textContent = value; };
+  async function refresh() {
+    if (!enabled || document.hidden || pending) return;
+    pending = true;
+    try {
+      const response = await fetch('/system-stats', {cache: 'no-store', signal: AbortSignal.timeout(4000)});
+      if (!response.ok) throw new Error('Stats unavailable');
+      const stats = await response.json();
+      show('gpu', formatDevice(stats.gpu));
+      show('cpu', formatDevice(stats.cpu));
+      show('vram', formatMemory(stats.vram));
+      show('ram', formatMemory(stats.ram));
+    } catch {
+      for (const name of ['gpu', 'cpu', 'vram', 'ram']) show(name, 'Unavailable');
+    } finally {
+      pending = false;
+    }
+  }
+  function apply() {
+    banner.hidden = !enabled;
+    if (toggle) toggle.checked = enabled;
+    clearInterval(timer);
+    if (enabled) {
+      refresh();
+      timer = setInterval(refresh, 3000);
+    }
+  }
+  toggle?.addEventListener('change', () => {
+    enabled = toggle.checked;
+    try { localStorage.setItem(key, enabled ? '1' : '0'); } catch {}
+    apply();
+  });
+  document.addEventListener('visibilitychange', refresh);
+  window.addEventListener('storage', event => {
+    if (event.key !== key) return;
+    enabled = event.newValue === '1';
+    apply();
+  });
+  apply();
+})();

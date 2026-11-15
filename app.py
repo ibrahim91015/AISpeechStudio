@@ -19,10 +19,12 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
 from catalog import ARABIC_SAMPLES, BUILTIN_VOICES, DIALECTS, EMOTIONS, FLAGS, INDEX_ENGLISH_VOICES, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, REFERENCE_VOICES, SPEAKERS, TASHKIL, controls, defaults, settings_from
+from catalog import CHATTERBOX_LANGUAGES, HIGGS_MODELS, REFERENCE_MODELS, REFERENCE_TRANSCRIPTS, REQUIRED_REFERENCE
 from documents import IMPORT_EXTENSIONS, MAX_TEXT, import_document
 from queue_worker import Worker
 import shares
 from storage import JOBS, REFERENCES, ROOT, VOICES, connect, one, rows, setup
+from system_stats import Stats
 from voice_media import store_voice
 
 
@@ -51,15 +53,18 @@ async def lifespan(app):
 app = FastAPI(title="AI Speech Studio", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 templates = Jinja2Templates(directory=ROOT / "templates")
+system_stats = Stats()
+studio_css_version = hashlib.sha256((ROOT / "static/studio.css").read_bytes()).hexdigest()[:12]
 studio_js_version = hashlib.sha256((ROOT / "static/studio.js").read_bytes()).hexdigest()[:12]
 trusted_origins = {origin.strip().rstrip("/").lower()
                    for origin in os.getenv("TTS_TRUSTED_ORIGINS", "").split(",") if origin.strip()}
 templates.env.globals.update(models=MODELS, dialects=DIALECTS, languages=QWEN_LANGUAGES, speakers=SPEAKERS,
                              flags=FLAGS, controls=controls, tashkil=TASHKIL, builtin_voices=BUILTIN_VOICES,
-                             index_languages=INDEX_LANGUAGES, english_voices=INDEX_ENGLISH_VOICES,
+                             index_languages=INDEX_LANGUAGES, chatterbox_languages=CHATTERBOX_LANGUAGES, higgs_models=HIGGS_MODELS,
+                             reference_transcripts=REFERENCE_TRANSCRIPTS, english_voices=INDEX_ENGLISH_VOICES,
                              emotions=EMOTIONS, arabic_samples=ARABIC_SAMPLES,
                              import_extensions=",".join(IMPORT_EXTENSIONS), max_text=MAX_TEXT,
-                             studio_js_version=studio_js_version)
+                             studio_js_version=studio_js_version, studio_css_version=studio_css_version)
 
 
 @app.middleware("http")
@@ -176,7 +181,7 @@ def studio(request: Request, model: str = "qwen", preset: int | None = None, reu
         config["voice_id"] = previous_voice
     if config.get("emo_voice") and not reference_file(uid, config["emo_voice"]):
         config["emo_voice"] = ""
-    if model in {"lahgtna", "index"} and uploaded_voice and reference_file(uid, uploaded_voice):
+    if model in REFERENCE_MODELS and uploaded_voice and reference_file(uid, uploaded_voice):
         config["voice_id"] = uploaded_voice
     if model == "index" and uploaded_emotion and reference_file(uid, uploaded_emotion):
         config.update(emo_mode="audio", emo_voice=uploaded_emotion)
@@ -191,6 +196,11 @@ def model_controls(request: Request, model: str = "qwen", reused: str = ""):
     uid = current_user(request)["id"]
     previous_voice = f"previous:{reused}" if reused and reference_file(uid, f"previous:{reused}") else ""
     return render(request, "controls.html", model=model, config=defaults(model), previous_voice=previous_voice, **lookups(uid))
+
+
+@app.get("/system-stats")
+def server_stats():
+    return JSONResponse(system_stats.sample(), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/activity", response_class=HTMLResponse)
@@ -242,7 +252,7 @@ async def upload_voice(request: Request):
     try:
         async with request.form(max_fields=1) as form:
             view = form.get("return_view")
-            native = view in {"voices", "lahgtna", "index", "index-emotion"}
+            native = view in REFERENCE_MODELS | {"voices", "index-emotion"}
             files = [file for file in form.getlist("reference") if isinstance(file, UploadFile) and file.filename]
             if not files or (len(files) > 1 and view != "voices"):
                 raise HTTPException(400, "Choose a reference audio file.")
@@ -395,12 +405,17 @@ async def create_job(request: Request):
                 if not text or len(text) > MAX_TEXT:
                     raise ValueError("Enter between 1 and 150,000 characters of text.")
                 title = name_from(form, "title", " ".join(text.split())[:60])
-            if model in {"lahgtna", "index"} and isinstance(reference, UploadFile) and reference.filename:
+            if model in REFERENCE_MODELS and isinstance(reference, UploadFile) and reference.filename:
                 selected_voice = await run_in_threadpool(store_voice, uid, reference)
                 config["voice_id"] = selected_voice
                 saved_voice = one("SELECT id,name FROM voices WHERE id=?", (selected_voice,))
-            if model == "index" and not selected_voice:
-                raise ValueError("Choose or upload a reference voice for IndexTTS.")
+            if model in REQUIRED_REFERENCE and not selected_voice:
+                raise ValueError(f"Choose or upload a reference voice for {MODELS[model]}.")
+            if model == "qwen_base" and not config["x_vector_only"]:
+                if not (config["reference_text"] or REFERENCE_TRANSCRIPTS.get(selected_voice)):
+                    raise ValueError("Enter the reference transcript or enable Clone without transcript.")
+            if model in HIGGS_MODELS and not selected_voice and config["reference_text"]:
+                raise ValueError("Choose the recording that matches the reference transcript.")
             if is_preset:
                 with connect() as db:
                     db.execute("INSERT INTO presets(user_id,name,model,settings) VALUES (?,?,?,?) ON CONFLICT(user_id,name) DO UPDATE SET model=excluded.model, settings=excluded.settings",
@@ -408,7 +423,7 @@ async def create_job(request: Request):
                 response = render(request, "notice.html", message=f"Saved preset {title}. Find it under Library.", error=False)
                 return notify_voice(response, saved_voice)
             folder.mkdir()
-            if model in {"lahgtna", "index"}:
+            if model in REFERENCE_MODELS:
                 dest = folder / "reference.wav"
                 if selected_voice:
                     shutil.copyfile(reference_file(uid, selected_voice), dest)

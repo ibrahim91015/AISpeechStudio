@@ -183,3 +183,13 @@ progress { width: 100%; height: 8px; }
   .library-main .section-head { align-items: start; flex-direction: column; gap: 8px; }
 }
 @media (max-width: 370px) { .script-meta { grid-template-columns: 1fr; } }
+
+.system-stats { background: var(--surface); border-bottom: 1px solid var(--stroke); }
+.stats-inner { max-width: 1336px; margin: 0 auto; padding: 9px 34px; display: flex; flex-wrap: wrap; column-gap: 26px; row-gap: 4px; font-size: .83rem; }
+.stats-inner div { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.stats-inner dt { color: var(--muted); font-weight: 650; }
+.stats-inner dd { margin: 0; font-variant-numeric: tabular-nums; }
+#live-stats-help { margin-top: 6px; }
+@media (max-width: 720px) {
+  .stats-inner { padding-inline: 16px; }
+}

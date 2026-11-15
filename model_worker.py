@@ -1,4 +1,5 @@
 """One disposable CUDA process. The web process communicates over JSON lines."""
+import copy
 import gc
 import json
 import os
@@ -6,8 +7,11 @@ import random
 import sys
 from pathlib import Path
 
-from catalog import ARABIC, DIALECTS, FLAGS, INDEX_GENERATION, QWEN
-from storage import AISPEECH, REFERENCES
+from catalog import ARABIC, CHATTERBOX, DIALECTS, FLAGS, HIGGS_MODELS, INDEX_GENERATION, QWEN, REFERENCE_TRANSCRIPTS
+from storage import AISPEECH, REFERENCES, ROOT
+
+
+VRAM_FLOOR_MIB = {"qwen_base": 5400, "higgs_bf16": 9850, "higgs_q8": 6800, "chatterbox": 4200}
 
 
 def dialect_for(text):
@@ -34,10 +38,28 @@ def load(kind, report_load):
     torch.set_num_interop_threads(1)
     torch.cuda.init()
     report_load(1)
-    if kind == "qwen":
+    free_vram, _ = torch.cuda.mem_get_info()
+    required = VRAM_FLOOR_MIB.get(kind, 0)
+    if free_vram < required * 1024 ** 2:
+        raise RuntimeError(f"The model needs at least {required:,} MiB of free VRAM. Wait for GPU activity to finish and try again.")
+    if kind in HIGGS_MODELS:
+        from higgs_adapter import HiggsBF16, HiggsQ8
+
+        return HiggsBF16(free_vram) if kind == "higgs_bf16" else HiggsQ8()
+    if kind == "chatterbox":
+        source = ROOT / ".runtime/chatterbox-v3-src/space/chatterbox/src"
+        sys.path.insert(0, str(source))
+        sys.path.insert(0, str(ROOT / ".runtime/chatterbox-deps"))
+        from chatterbox.tts import ChatterboxTTS
+
+        model = ChatterboxTTS.from_local(AISPEECH / "models/Chatterbox-Multilingual-V3", "cuda:0")
+        model.studio_default_conds = model.conds
+        return model
+    if kind in {"qwen", "qwen_base"}:
         from qwen_tts import Qwen3TTSModel
 
-        path = Path(os.getenv("TTS_QWEN_MODEL", AISPEECH / "models/Qwen3-TTS-12Hz-1.7B-CustomVoice"))
+        path = (AISPEECH / "models/Qwen3-TTS-12Hz-1.7B-Base" if kind == "qwen_base" else
+                Path(os.getenv("TTS_QWEN_MODEL", AISPEECH / "models/Qwen3-TTS-12Hz-1.7B-CustomVoice")))
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         model = Qwen3TTSModel.from_pretrained(
             str(path), device_map="cuda:0", dtype=dtype, attn_implementation="sdpa",
@@ -60,7 +82,7 @@ def load(kind, report_load):
     return ChatterboxMultilingualTTS.from_checkpoint(str(checkpoint) + "/", "cuda")
 
 
-def prepare(kind, data):
+def prepare(kind, model, data, state):
     import numpy as np
     import torch
 
@@ -72,6 +94,32 @@ def prepare(kind, data):
         np.random.seed(seed)
     if kind == "qwen":
         return {}
+    if kind == "qwen_base":
+        state.clear()
+        transcript = reference_transcript(settings)
+        with torch.inference_mode():
+            state["voice_clone_prompt"] = model.create_voice_clone_prompt(
+                ref_audio=data["reference"], ref_text=transcript or None, x_vector_only_mode=settings["x_vector_only"],
+            )
+        return {}
+    if kind in HIGGS_MODELS:
+        reference = data["reference"]
+        if reference:
+            import soundfile as sf
+
+            # Built-in references can be FLAC, even though job snapshots use this filename.
+            path = Path(reference)
+            with sf.SoundFile(path) as audio:
+                wav = audio.read(frames=30 * audio.samplerate, dtype="float32", always_2d=True)
+                rate = audio.samplerate
+            reference = str(path.with_name("higgs-reference.wav"))
+            sf.write(reference, wav.mean(axis=1), rate, subtype="PCM_16")
+        with torch.inference_mode():
+            model.prepare(reference)
+        return {}
+    if kind == "chatterbox":
+        model.conds = copy.copy(model.studio_default_conds)
+        return {"reference": data["reference"]}
     if kind == "index":
         return {"reference": data["reference"], "emotion": data["emotion"]}
     dialect = settings["dialect"]
@@ -81,29 +129,47 @@ def prepare(kind, data):
     return {"dialect": dialect, "reference": reference}
 
 
-def render(kind, model, data):
+def reference_transcript(settings):
+    return settings.get("reference_text") or REFERENCE_TRANSCRIPTS.get(settings.get("voice_id"), "")
+
+
+def render(kind, model, data, state):
     import numpy as np
     import soundfile as sf
     import torch
 
     s = data["settings"]
     with torch.inference_mode():
-        if kind == "qwen":
+        if kind in {"qwen", "qwen_base"}:
             generation = {k: s[k] for k in (*QWEN, *FLAGS)}
             if not s["do_sample"]:
                 for key in ("temperature", "top_k", "top_p"):
                     generation.pop(key)
-            if s["instruct"]:
+            if s.get("instruct"):
                 prompts = [model._build_instruct_text(s["instruct"]), model._build_assistant_text(data["text"])]
                 prompt_tokens = sum(tokens.numel() for tokens in model._tokenize_texts(prompts))
                 limit = model.model.config.talker_config.max_position_embeddings
                 if prompt_tokens + s["max_new_tokens"] + 16 > limit:
                     raise ValueError(f"Delivery instruction, script chunk and reserved codec output exceed the {limit:,}-token model context. Shorten the instruction or lower the codec token limit.")
-            wavs, rate = model.generate_custom_voice(
-                text=data["text"], language=s["language"], speaker=s["speaker"],
-                instruct=s["instruct"] or None, **generation,
-            )
+            if kind == "qwen_base":
+                wavs, rate = model.generate_voice_clone(
+                    text=data["text"], language=s["language"], voice_clone_prompt=state["voice_clone_prompt"], **generation,
+                )
+            else:
+                wavs, rate = model.generate_custom_voice(
+                    text=data["text"], language=s["language"], speaker=s["speaker"],
+                    instruct=s["instruct"] or None, **generation,
+                )
             wav = wavs[0]
+        elif kind in HIGGS_MODELS:
+            wav, rate = model.render(data["text"], reference_transcript(s), s)
+        elif kind == "chatterbox":
+            wav = model.generate(
+                data["text"], language_id=s["language"],
+                audio_prompt_path=data["reference"] if data["first"] else None,
+                **{key: s[key] for key in CHATTERBOX},
+            ).detach().cpu().float().numpy()
+            rate = model.sr
         elif kind == "index":
             mode = s["emo_mode"]
             vector = model.normalize_emo_vec(s["emo_vector"], apply_bias=True) if mode == "vector" else None
@@ -154,19 +220,30 @@ def main():
     def checkpoint(step):
         print(json.dumps({"loaded_step": step}), file=protocol)
 
-    model = load(kind, checkpoint)
-    checkpoint(2)
     import torch
-    torch.cuda.synchronize()
+
+    try:
+        model = load(kind, checkpoint)
+        checkpoint(2)
+        torch.cuda.synchronize()
+    except torch.OutOfMemoryError:
+        print(json.dumps({"error": "CUDA ran out of memory while loading this model. Let other GPU activity finish and retry."}), file=protocol)
+        raise
+    except Exception as exc:
+        print(json.dumps({"error": f"{type(exc).__name__}: {exc}"}), file=protocol)
+        raise
     print(json.dumps({"ready": True}), file=protocol)
+    state = {}
     for raw in sys.stdin:
         message = json.loads(raw)
         try:
             if message["op"] == "prepare":
-                result = prepare(kind, message)
+                result = prepare(kind, model, message, state)
             else:
-                result = render(kind, model, message)
+                result = render(kind, model, message, state)
             print(json.dumps({"ok": result}), file=protocol)
+        except torch.OutOfMemoryError:
+            print(json.dumps({"error": "CUDA ran out of memory during generation. Try a shorter chunk or lower the audio token limit."}), file=protocol)
         except Exception as exc:
             print(json.dumps({"error": f"{type(exc).__name__}: {exc}"}), file=protocol)
 

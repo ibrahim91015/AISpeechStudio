@@ -1,7 +1,22 @@
 from dataclasses import dataclass
 
 
-MODELS = {"qwen": "Qwen3-TTS CustomVoice", "lahgtna": "Lahgtna Chatterbox (Arabic)", "index": "IndexTTS 2.5"}
+MODELS = {
+    "qwen": "Qwen3-TTS CustomVoice", "lahgtna": "Lahgtna Chatterbox (Arabic)", "index": "IndexTTS 2.5",
+    "qwen_base": "Qwen3-TTS 12Hz 1.7B Base", "higgs_bf16": "Higgs TTS 3 4B (BF16)",
+    "higgs_q8": "Higgs TTS 3 4B (Q8)", "chatterbox": "Chatterbox Multilingual V3",
+}
+HIGGS_MODELS = {"higgs_bf16", "higgs_q8"}
+REFERENCE_MODELS = set(MODELS) - {"qwen"}
+REQUIRED_REFERENCE = {"index", "qwen_base"}
+REFERENCE_TRANSCRIPTS = {
+    "dialect:en-us-joe": "If being able to work from home is important to you, it's good to get a sense of a company's flexibility before getting too far along in the interview process.",
+    "dialect:en-us-mike": "There are beautiful vistas, secluded villages, and a range of exhilarating walks en route. You'd be surprised at just how outrageous or outlandish some of the claims are.",
+}
+CHATTERBOX_LANGUAGES = dict(zip(
+    "ar da de el en es fi fr he hi it ja ko ms nl no pl pt ru sv sw tr zh".split(),
+    "Arabic Danish German Greek English Spanish Finnish French Hebrew Hindi Italian Japanese Korean Malay Dutch Norwegian Polish Portuguese Russian Swedish Swahili Turkish Chinese".split(),
+))
 DIALECTS = {
     "auto": ("Auto-detect dialect", "", ""),
     "eg": ("Egyptian · مصري", "ar_prompts2.flac", "إزيك؟ النهارده هنسجل حكاية جديدة."),
@@ -72,6 +87,13 @@ QWEN = {
     "subtalker_top_p": Control("Sub-talker top-p", 1., .01, 1, .01),
     "subtalker_temperature": Control("Sub-talker temperature", .9, .05, 5, .01),
 }
+HIGGS = {
+    "temperature": Control("Temperature", .8, .05, 2, .01),
+    "top_k": Control("Top-k", 30, 1, 100, 1),
+    "top_p": Control("Top-p", .8, .01, 1, .01),
+    "max_new_tokens": Control("Max audio tokens per chunk", 1024, 64, 2048, 1),
+}
+CHATTERBOX = {key: ARABIC[key] for key in ("exaggeration", "cfg_weight", "temperature")}
 INDEX_GENERATION = {
     "temperature": Control("Temperature", .8, .1, 2, .1),
     "top_k": Control("Top-k", 30, 0, 100, 1),
@@ -91,8 +113,11 @@ FLAGS = {"do_sample": "Sample main talker", "subtalker_dosample": "Sample sub-ta
 
 
 def controls(model):
-    chunk = Control("Characters per chunk", 220, 80, 280, 1) if model == "lahgtna" else Control("Characters per chunk", 320, 80, 900, 1)
-    result = {**{"lahgtna": ARABIC, "qwen": QWEN, "index": INDEX}[model], **COMMON, "chunk_size": chunk}
+    chunk = (Control("Characters per chunk", 220, 80, 280, 1) if model in {"lahgtna", "chatterbox"}
+             else Control("Characters per chunk", 320, 80, 900, 1))
+    specific = {"lahgtna": ARABIC, "qwen": QWEN, "qwen_base": QWEN, "index": INDEX,
+                "higgs_bf16": HIGGS, "higgs_q8": HIGGS, "chatterbox": CHATTERBOX}
+    result = {**specific[model], **COMMON, "chunk_size": chunk}
     if model == "index":
         result["pause_ms"] = Control("Pause between chunks (ms)", 260, 0, 3000, 10)
     return result
@@ -107,6 +132,12 @@ def defaults(model):
         return dict(values, language="en", voice_id="", emo_mode="speaker", emo_voice="", emo_text="",
                     emo_vector=[0.] * len(EMOTIONS), emo_random=False, do_sample=True, text_normalization=True,
                     glossary="")
+    if model == "qwen_base":
+        return dict(values, language="English", voice_id="", reference_text="", x_vector_only=False, **dict.fromkeys(FLAGS, True))
+    if model in HIGGS_MODELS:
+        return dict(values, voice_id="", reference_text="")
+    if model == "chatterbox":
+        return dict(values, language="en", voice_id="")
     return dict(values, language="English", speaker="Ryan", instruct="", **dict.fromkeys(FLAGS, True))
 
 
@@ -149,6 +180,22 @@ def settings_from(form, model):
                 raise ValueError("Write one glossary entry per line as term = spoken form.")
         if settings["emo_mode"] != "audio":
             settings["emo_voice"] = ""
+    elif model in HIGGS_MODELS or model in {"qwen_base", "chatterbox"}:
+        settings["voice_id"] = form.get("voice_id", "")
+        if model != "chatterbox":
+            settings["reference_text"] = form.get("reference_text", "").strip()
+            if len(settings["reference_text"]) > 2048:
+                raise ValueError("Keep the reference transcript within 2,048 characters.")
+        if model == "qwen_base":
+            settings["language"] = form.get("language", "English")
+            settings["x_vector_only"] = form.get("x_vector_only") == "1"
+            settings.update({k: form.get(k) == "1" for k in FLAGS})
+            if settings["language"] not in QWEN_LANGUAGES:
+                raise ValueError("Choose a supported Qwen language.")
+        if model == "chatterbox":
+            settings["language"] = form.get("language", "en")
+            if settings["language"] not in CHATTERBOX_LANGUAGES:
+                raise ValueError("Choose a supported Chatterbox language.")
     else:
         settings.update(language=form.get("language", "English"), speaker=form.get("speaker", "Ryan"), instruct=form.get("instruct", "").strip())
         if settings["language"] not in QWEN_LANGUAGES or settings["speaker"] not in SPEAKERS:

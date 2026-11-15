@@ -1,11 +1,11 @@
 {% macro options(selected) -%}
   {% if voices %}<optgroup label="Uploaded voices">{% for voice in voices %}<option value="{{ voice.id }}"{% if selected == voice.id %} selected{% endif %}>{{ voice.name }}</option>{% endfor %}</optgroup>{% endif %}
-  {% if model == 'index' %}<optgroup label="American English references">{% for key, voice in english_voices.items() %}<option value="dialect:{{ key }}"{% if selected == ('dialect:' ~ key) %} selected{% endif %}>{{ voice[0] }}</option>{% endfor %}</optgroup>{% endif %}
+  {% if model != 'lahgtna' %}<optgroup label="American English references">{% for key, voice in english_voices.items() %}<option value="dialect:{{ key }}"{% if selected == ('dialect:' ~ key) %} selected{% endif %}>{{ voice[0] }}</option>{% endfor %}</optgroup>{% endif %}
   <optgroup label="Built-in dialect voices">{% for key, voice in builtin_voices.items() %}<option value="dialect:{{ key }}"{% if selected == ('dialect:' ~ key) %} selected{% endif %}>{{ voice[0] }}</option>{% endfor %}</optgroup>
 {%- endmacro %}
 <label>Reference voice
   <select name="voice_id" id="voice-id">
-    <option value="">{{ ('Dialect reference · ' ~ dialects[config.dialect][0]) if model == 'lahgtna' else 'Choose a voice' }}</option>
+    <option value="">{{ ('Dialect reference · ' ~ dialects[config.dialect][0]) if model == 'lahgtna' else ('Use default voice' if model in higgs_models or model == 'chatterbox' else 'Choose a voice') }}</option>
     {% if previous_voice %}<option value="{{ previous_voice }}"{% if previous_voice == config.voice_id %} selected{% endif %}>Previous recording’s reference</option>{% endif %}
     {{ options(config.voice_id) }}
   </select>
