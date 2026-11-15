@@ -1,5 +1,5 @@
 <article class="job" id="recording-{{ job.id }}" data-job="{{ job.id }}" data-status="{{ job.status }}">
-  <div class="job-label"><h3>{{ job.title }}</h3><p>{{ models[job.model] }}{% if job.project_name %} · {{ job.project_name }}{% endif %}{% if job.config.detected_dialect %} · {{ dialects[job.config.detected_dialect][0] }}{% endif %}{% if job.duration %} · {{ '%.1f'|format(job.duration) }} s{% endif %}</p></div>
+  <div class="job-label"><h3>{{ job.title }}</h3><p>{{ models[job.model] }}{% if job.project_name %} · {{ job.project_name }}{% endif %}{% if job.config.detected_dialect %} · {{ dialects[job.config.detected_dialect][0] }}{% endif %}{% if job.duration_label %} · {{ job.duration_label }}{% endif %}{% if job.size_label %} · {{ job.size_label }}{% endif %}</p></div>
   {% if page == 'library' and job.status not in ('running', 'queued') %}
     <label class="check recording-pick" hidden><input type="checkbox" form="bulk-recordings" name="recording" value="{{ job.id }}">Select {{ job.title }}</label>
   {% endif %}

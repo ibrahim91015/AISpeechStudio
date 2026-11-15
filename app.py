@@ -150,6 +150,20 @@ def lookups(uid):
 def decode_jobs(items):
     for item in items:
         item["config"] = json.loads(item["settings"])
+        duration = item["duration"]
+        if duration:
+            if duration >= 60:
+                minutes, seconds = divmod(round(duration), 60)
+                item["duration_label"] = f"{minutes}m {seconds}s"
+            else:
+                item["duration_label"] = f"{duration:.1f} s"
+        if item["status"] == "finished":
+            audio = JOBS / item["id"] / f"speech.{item['config'].get('format', 'wav')}"
+            try:
+                size = audio.stat().st_size
+            except OSError:
+                continue
+            item["size_label"] = "<0.01mb" if 0 < size < 5_000 else f"{size / 1_000_000:.2f}mb"
     return items
 
 
