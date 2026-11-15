@@ -11,11 +11,12 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from storage import AISPEECH, ROOT
 
 
+LOCAL_HTTP = build_opener(ProxyHandler({}))
 RUNTIME = ROOT / ".runtime"
 MIB = 1024 ** 2
 
@@ -47,7 +48,9 @@ class HiggsBF16:
             model=native.build_native_model(native.read_config(checkpoint), torch.bfloat16, "sdpa"),
         )
         native.load_native_weights(self.bundle.model, checkpoint, cuda, torch.bfloat16)
-        self.bundle.codec = native.HiggsAudioCodec.from_pretrained(checkpoint, codec_device)
+        self.bundle.codec = native.HiggsAudioCodec.from_pretrained(
+            checkpoint, device=codec_device, dtype=torch.float32 if codec_device.type == "cpu" else torch.bfloat16,
+        )
         self.reference = None
 
     def prepare(self, reference):
@@ -94,7 +97,7 @@ class HiggsQ8:
             }, config)
             config.flush()
             self.process = subprocess.Popen(
-                [str(root / "audiocpp_server"), "--config", config.name, "--no-ui", "--log",
+                [str(root / "audiocpp_server"), "--config", config.name, "--no-ui",
                  "--min-free-memory-mb", "512"], cwd=root, env=env,
                 stdin=subprocess.DEVNULL, stdout=sys.stderr, stderr=sys.stderr,
             )
@@ -103,7 +106,7 @@ class HiggsQ8:
                 if self.process.poll() is not None:
                     raise RuntimeError("The Higgs Q8 CUDA backend exited during model load. See worker.log.")
                 try:
-                    with urlopen(self.url + "/health", timeout=1) as response:
+                    with LOCAL_HTTP.open(self.url + "/health", timeout=1) as response:
                         if response.status == 200:
                             break
                 except (OSError, URLError):
@@ -130,7 +133,7 @@ class HiggsQ8:
         req = Request(self.url + "/v1/audio/speech", data=json.dumps(request).encode(),
                       headers={"Content-Type": "application/json"})
         try:
-            with urlopen(req, timeout=160) as response:
+            with LOCAL_HTTP.open(req, timeout=160) as response:
                 audio = response.read(16 * MIB + 1)
         except HTTPError as exc:
             detail = exc.read(1024).decode(errors="replace")

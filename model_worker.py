@@ -217,6 +217,12 @@ def main():
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", buffering=1)
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
     kind = sys.argv[1]
+    # Under host memory pressure, let the kernel reclaim this disposable process first.
+    try:
+        Path("/proc/self/oom_score_adj").write_text("500", encoding="ascii")
+    except OSError:
+        pass
+
     def checkpoint(step):
         print(json.dumps({"loaded_step": step}), file=protocol)
 
