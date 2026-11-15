@@ -1,5 +1,5 @@
 {% macro voice_option(key, name, selected, text='', edit_url='', hidden=false) -%}
-  <option value="{{ key }}"{% if selected == key %} selected{% endif %}{% if hidden %} hidden{% endif %}{% if model in transcript_models %} data-transcript="{{ text or '' }}"{% if text and edit_url %} data-transcript-link="{{ edit_url }}"{% endif %}{% endif %}>{% if model in transcript_models %}{% if text %}·{% else %}&#8200;{% endif %}&nbsp;{% endif %}{{ name }}</option>
+  <option value="{{ key }}"{% if selected == key %} selected{% endif %}{% if hidden %} hidden{% endif %}{% if model in transcript_models %} data-transcript="{{ text or '' }}"{% if text and edit_url %} data-transcript-link="{{ edit_url }}"{% endif %}{% endif %}>{% if model in transcript_models %}{% if text %}&#8729;{% else %}&#8200;{% endif %}&nbsp;{% endif %}{{ name }}</option>
 {%- endmacro %}
 {% macro options(selected) -%}
   {% if voices %}<optgroup label="Uploaded voices">{% for voice in voices %}{{ voice_option(voice.id, voice.name, selected, voice.transcript) }}{% endfor %}</optgroup>{% endif %}
