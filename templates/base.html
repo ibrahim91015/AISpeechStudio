@@ -8,7 +8,7 @@
   <title>{% block title %}AI Speech Studio{% endblock %}</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   {% if mobile_client %}
-  <link rel="manifest" href="/speech.webmanifest">
+  <link rel="manifest" href="/speech.webmanifest" crossorigin="use-credentials">
   <link rel="apple-touch-icon" href="/static/speech-icon-180.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   {% endif %}
@@ -41,6 +41,13 @@
     <div><dt>CPU</dt><dd data-stat="cpu">—</dd></div>
     <div><dt>RAM</dt><dd data-stat="ram">—</dd></div>
   </dl>
+</aside>
+<aside class="speech-notice" id="speech-page-notice" aria-label="Speech Studio alert" hidden>
+  <div role="status"><strong data-notice-title></strong><p data-notice-body></p></div>
+  <div class="speech-notice-actions">
+    <a class="quiet" data-notice-link href="/library">Open Library</a>
+    <button class="quiet" type="button" data-notice-close>Dismiss</button>
+  </div>
 </aside>
 <main class="main" id="main">{% block body %}{% endblock %}</main>
 </body>

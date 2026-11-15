@@ -36,6 +36,7 @@ class Keys(BaseModel):
 
 class Subscription(Endpoint):
     keys: Keys
+    mobile: bool = False
 
 
 def valid_endpoint(endpoint):
@@ -95,6 +96,7 @@ class PushDelivery:
         now = int(time())
         with connect() as db:
             db.execute("DELETE FROM push_outbox WHERE expires<=?", (now,))
+            db.execute("DELETE FROM page_notices WHERE expires<=?", (now,))
             due = db.execute("""
                 SELECT o.*, s.p256dh, s.auth FROM push_outbox o JOIN push_subscriptions s USING(endpoint)
                 WHERE next_attempt<=? ORDER BY next_attempt,id LIMIT 1

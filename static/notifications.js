@@ -14,6 +14,12 @@
   let audio;
   let enabled = false;
 
+  if (!/(?:^|;\s*)speech_device=[a-f0-9]{32}(?:;|$)/.test(document.cookie)) {
+    const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+    document.cookie = 'speech_device=' + id + '; Path=/; Max-Age=31536000; SameSite=Lax' +
+      (location.protocol === 'https:' ? '; Secure' : '');
+  }
+
   function owner() {
     try { return localStorage.getItem(storageKey); } catch { return null; }
   }
@@ -52,11 +58,75 @@
     return true;
   }
 
+  const notice = document.querySelector('#speech-page-notice');
+  if (notice) {
+    const cursorKey = 'aispeech-notice-cursor:' + profile;
+    let cursor;
+    let timer;
+    let activeRequest = false;
+    let hideTimer;
+    const queue = [];
+    try { cursor = sessionStorage.getItem(cursorKey); } catch {}
+
+    function dismiss() {
+      notice.hidden = true;
+      clearTimeout(hideTimer);
+      showNext();
+    }
+
+    function showNext() {
+      if (!notice.hidden || !queue.length) return;
+      const item = queue.shift();
+      notice.querySelector('[data-notice-title]').textContent = item.title;
+      notice.querySelector('[data-notice-body]').textContent = item.body;
+      notice.querySelector('[data-notice-link]').href = item.url;
+      notice.hidden = false;
+      if (item.ping && !mobile && document.hasFocus() && !owner()) playPing();
+      hideTimer = setTimeout(dismiss, 9000);
+    }
+
+    async function poll() {
+      if (document.hidden || activeRequest) return;
+      activeRequest = true;
+      let delay = 5000;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 7000);
+      try {
+        const search = cursor == null ? '' : '?after=' + encodeURIComponent(cursor);
+        const response = await fetch('/notifications/feed' + search, {cache: 'no-store', signal: controller.signal});
+        if (!response.ok) throw new Error('Alerts are unavailable');
+        const result = await response.json();
+        cursor = String(result.after);
+        try { sessionStorage.setItem(cursorKey, cursor); } catch {}
+        queue.push(...result.notices);
+        showNext();
+      } catch {
+        delay = 15000;
+      } finally {
+        clearTimeout(timeout);
+        activeRequest = false;
+        if (!document.hidden) timer = setTimeout(poll, delay);
+      }
+    }
+
+    notice.querySelector('[data-notice-close]').addEventListener('click', dismiss);
+    document.addEventListener('visibilitychange', () => {
+      clearTimeout(timer);
+      if (!document.hidden) poll();
+    });
+    if (!mobile) {
+      document.addEventListener('pointerdown', unlockPing, {once: true});
+      document.addEventListener('keydown', unlockPing, {once: true});
+    }
+    poll();
+  }
+
   if (mobile && !document.querySelector('link[rel=manifest]')) {
     for (const [rel, href] of [['manifest', '/speech.webmanifest'], ['apple-touch-icon', '/static/speech-icon-180.png']]) {
       const link = document.createElement('link');
       link.rel = rel;
       link.href = href;
+      if (rel === 'manifest') link.crossOrigin = 'use-credentials';
       document.head.append(link);
     }
     if (ios) {
@@ -112,13 +182,10 @@
 
   navigator.serviceWorker.addEventListener('message', event => {
     if (event.data?.type !== 'speech-ping') return;
-    const mine = String(event.data.profile) === profile && (enabled || owner() === profile);
+    const mine = event.data.profile === null ? Boolean(owner()) :
+      String(event.data.profile) === profile && (enabled || owner() === profile);
     event.ports[0]?.postMessage(mine && playPing());
   });
-  if (!mobile && owner() === profile) {
-    document.addEventListener('pointerdown', unlockPing, {once: true});
-    document.addEventListener('keydown', unlockPing, {once: true});
-  }
   const service = mobile || toggle
     ? navigator.serviceWorker.register('/speech-worker.js' + (mobile ? '?mobile=1' : ''))
     : null;
@@ -142,7 +209,10 @@
     serverKey = Uint8Array.from(atob(base64), character => character.charCodeAt(0));
     subscription = await registration.pushManager.getSubscription();
     enabled = subscription ? (await request('status', {endpoint: subscription.endpoint})).enabled : false;
-    if (enabled) remember(true);
+    if (enabled) {
+      await request('subscribe', {...subscription.toJSON(), mobile});
+      remember(true);
+    }
     syncSettings(Notification.permission === 'denied'
       ? 'Notifications are blocked. Allow them in your browser or device settings, then refresh.' : '');
   };
@@ -162,7 +232,7 @@
         subscription = null;
       } else {
         subscription ||= await registration.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: serverKey});
-        await request('subscribe', subscription.toJSON());
+        await request('subscribe', {...subscription.toJSON(), mobile});
         enabled = true;
         remember(true);
       }

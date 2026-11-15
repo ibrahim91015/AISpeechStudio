@@ -24,7 +24,7 @@ from catalog import CHATTERBOX_LANGUAGES, HIGGS_MODELS, REFERENCE_MODELS, REQUIR
 from demo_voices import CLIPS, COLLECTION_CLIPS, transcript_for, voice_collections
 from documents import IMPORT_EXTENSIONS, MAX_TEXT, import_document
 from queue_worker import Worker
-from notification_events import enqueue, speech_event
+from notification_events import device_id, enqueue, speech_event
 from push_delivery import Endpoint, PushDelivery, Subscription, valid_endpoint, valid_key
 import shares
 from storage import JOBS, REFERENCES, ROOT, VOICES, connect, one, rows, setup
@@ -263,9 +263,12 @@ def subscribe_notifications(request: Request, subscription: Subscription):
         db.execute("BEGIN IMMEDIATE")
         db.execute("DELETE FROM push_subscriptions WHERE endpoint=? AND user_id<>?", (subscription.endpoint, uid))
         db.execute("""
-            INSERT INTO push_subscriptions(endpoint,user_id,p256dh,auth) VALUES (?,?,?,?)
-            ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth
-            """, (subscription.endpoint, uid, subscription.keys.p256dh, subscription.keys.auth))
+            INSERT INTO push_subscriptions(endpoint,user_id,p256dh,auth,device_id,mobile,last_seen)
+            VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth,
+                device_id=excluded.device_id, mobile=excluded.mobile, last_seen=excluded.last_seen
+            """, (subscription.endpoint, uid, subscription.keys.p256dh, subscription.keys.auth,
+                  device_id(request.cookies.get("speech_device")), subscription.mobile, int(time.time())))
     return {"enabled": True}
 
 
@@ -282,6 +285,30 @@ def notification_status(request: Request, subscription: Endpoint):
     enabled = one("SELECT 1 FROM push_subscriptions WHERE endpoint=? AND user_id=?",
                   (subscription.endpoint, current_user(request)["id"])) is not None
     return {"enabled": enabled}
+
+
+@app.get("/notifications/feed")
+def page_notification_feed(request: Request, after: int | None = None):
+    uid = current_user(request)["id"]
+    device = device_id(request.cookies.get("speech_device"))
+    now = int(time.time())
+    with connect() as db:
+        if device:
+            db.execute("UPDATE push_subscriptions SET last_seen=? WHERE device_id=? AND last_seen<?",
+                       (now, device, now - 15))
+        if after is None:
+            cursor = db.execute("SELECT COALESCE(MAX(id),0) FROM page_notices").fetchone()[0]
+            notices = []
+        else:
+            notices = db.execute("""
+                SELECT id, CASE WHEN user_id=? THEN payload ELSE public_payload END AS data
+                FROM page_notices WHERE id>? AND expires>?
+                  AND (public_payload IS NOT NULL OR (user_id=? AND device_id=?))
+                ORDER BY id LIMIT 24
+                """, (uid, max(after, 0), now, uid, device)).fetchall()
+            cursor = notices[-1]["id"] if notices else after
+    return JSONResponse({"after": cursor, "notices": [json.loads(row["data"]) for row in notices]},
+                        headers={"Cache-Control": "private, no-store"})
 
 
 @app.post("/notifications/test")
@@ -502,7 +529,8 @@ def create_share(request: Request, key: str, rate: int):
     job, path = share_source(request, key)
     if rate not in {option["rate"] for option in shares.options(path, job["duration"])}:
         raise HTTPException(400, "Choose a smaller MP3 preset.")
-    return shares.start(request.app.state.share_worker, job, rate, path)
+    requester = device_id(request.cookies.get("speech_device"))
+    return shares.start(request.app.state.share_worker, {**job, "remux_device": requester}, rate, path)
 
 
 @app.get("/jobs/{key}/share/{rate}")
@@ -597,10 +625,13 @@ async def create_job(request: Request):
             with connect() as db:
                 db.execute("BEGIN IMMEDIATE")
                 ahead = db.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('running','queued')").fetchone()[0]
-                db.execute("INSERT INTO jobs(id,user_id,project_id,model,title,script,settings,status,queue_ahead) "
-                           "VALUES (?,?,?,?,?,?,?,'queued',?)", (key, uid, project, model, title, text, json.dumps(config), ahead))
+                requester = device_id(request.cookies.get("speech_device"))
+                db.execute("INSERT INTO jobs(id,user_id,project_id,model,title,script,settings,status,queue_ahead,request_device) "
+                           "VALUES (?,?,?,?,?,?,?,'queued',?,?)",
+                           (key, uid, project, model, title, text, json.dumps(config), ahead, requester))
                 if ahead:
-                    speech_event(db, {"id": key, "user_id": uid, "title": title, "model": model}, "queued", ahead=ahead)
+                    speech_event(db, {"id": key, "user_id": uid, "title": title, "model": model,
+                                      "request_device": requester}, "queued", ahead=ahead)
         except (ValueError, OSError, sqlite3.IntegrityError, HTTPException) as exc:
             shutil.rmtree(folder, ignore_errors=True)
             return submit_error(request, str(exc))

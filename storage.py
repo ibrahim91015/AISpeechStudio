@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS push_outbox (
     UNIQUE(endpoint, event_key)
 );
 CREATE INDEX IF NOT EXISTS push_outbox_due ON push_outbox(next_attempt, id);
+CREATE TABLE IF NOT EXISTS page_notices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, event_key TEXT NOT NULL UNIQUE, user_id INTEGER NOT NULL,
+    device_id TEXT, payload TEXT NOT NULL, public_payload TEXT, expires INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS page_notices_expiry ON page_notices(expires);
 CREATE TABLE IF NOT EXISTS hidden_reference_collections (
     collection_key TEXT PRIMARY KEY
 );
@@ -89,7 +94,9 @@ def setup():
         db.execute("PRAGMA journal_mode=WAL")
         db.executescript(SCHEMA)
         columns = {"voices": {"original_name": "TEXT", "media_type": "TEXT", "size": "INTEGER", "duration": "REAL"},
-                   "jobs": {"queue_ahead": "INTEGER NOT NULL DEFAULT 0"},
+                   "jobs": {"queue_ahead": "INTEGER NOT NULL DEFAULT 0", "request_device": "TEXT"},
+                   "push_subscriptions": {"device_id": "TEXT", "mobile": "INTEGER NOT NULL DEFAULT 0",
+                                          "last_seen": "INTEGER NOT NULL DEFAULT 0"},
                    "worker_state": {"phase": "TEXT", "step": "INTEGER", "total": "INTEGER", "target": "TEXT"}}
         for table, fields in columns.items():
             existing = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}

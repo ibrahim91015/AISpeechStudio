@@ -85,7 +85,8 @@ def convert(job, rate, source, queued_at):
         url = f"/library?recording={identifier}&share={rate}#recording-{identifier}"
         with connect() as db:
             enqueue(db, job["user_id"], f"mp3-{identifier}-{rate}-{uuid4().hex[:8]}",
-                    "MP3 ready" if ready_bytes else "MP3 conversion stopped", body, url, ping=bool(ready_bytes), ttl=3600)
+                    "MP3 ready" if ready_bytes else "MP3 conversion stopped", body, url, ping=bool(ready_bytes), ttl=3600,
+                    device=job.get("remux_device"))
 
 
 def start(executor: ThreadPoolExecutor, job, rate, source):
