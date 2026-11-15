@@ -36,12 +36,15 @@
   <section class="surface" aria-labelledby="upload-voice-heading">
     <div class="panel-head"><div><h2 id="upload-voice-heading">Upload voices</h2><p>Choose one or more clips. Up to 25 MB per file.</p></div></div>
     <div class="add-voice">
-      <label>Audio files <input id="voice-files" type="file" accept="audio/*,.webm,.m4a,.aiff,.aac,.caf,.wma,.wav,.flac,.mp3,.ogg,.opus" multiple></label>
+      <form class="add-voice" id="voice-upload-form" action="/voices/upload" method="post" enctype="multipart/form-data">
+        <label>Audio files <input id="voice-files" name="reference" type="file" accept="audio/*,.webm,.m4a,.aiff,.aac,.caf,.wma,.wav,.flac,.mp3,.ogg,.opus" multiple required></label>
+        <button class="button primary" type="submit" name="return_view" value="voices">Upload</button>
+      </form>
       <form id="name-latest-voice" class="add-form">
         <label>Voice name <input id="new-voice-name" name="name" required maxlength="100" disabled></label>
         <button class="button tonal">Rename</button>
       </form>
-      <span id="voice-notice" class="inline-message" aria-live="polite"></span>
+      <span id="voice-notice" class="inline-message" aria-live="polite">{% if uploaded %}Saved {{ uploaded }} voice{{ 's' if uploaded != 1 else '' }}.{% endif %}{% if skipped %} {{ skipped }} could not be uploaded.{% endif %}</span>
       {% with upload_id='voice-upload-progress', upload_label='Uploading audio clips' %}{% include 'upload_progress.html' %}{% endwith %}
     </div>
   </section>

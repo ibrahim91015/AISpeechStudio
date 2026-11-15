@@ -1,12 +1,14 @@
 import asyncio
+import hashlib
 import json
+import os
 import shutil
 import sqlite3
 import time
 import uuid
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -14,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.datastructures import UploadFile
 from starlette.concurrency import run_in_threadpool
+from starlette.requests import ClientDisconnect
 
 from catalog import ARABIC_SAMPLES, BUILTIN_VOICES, DIALECTS, EMOTIONS, FLAGS, INDEX_LANGUAGES, MODELS, QWEN_LANGUAGES, SPEAKERS, TASHKIL, controls, defaults, settings_from
 from documents import IMPORT_EXTENSIONS, MAX_TEXT, import_document
@@ -48,17 +51,29 @@ async def lifespan(app):
 app = FastAPI(title="AI Speech Studio", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 templates = Jinja2Templates(directory=ROOT / "templates")
+studio_js_version = hashlib.sha256((ROOT / "static/studio.js").read_bytes()).hexdigest()[:12]
+trusted_origins = {origin.strip().rstrip("/").lower()
+                   for origin in os.getenv("TTS_TRUSTED_ORIGINS", "").split(",") if origin.strip()}
 templates.env.globals.update(models=MODELS, dialects=DIALECTS, languages=QWEN_LANGUAGES, speakers=SPEAKERS,
                              flags=FLAGS, controls=controls, tashkil=TASHKIL, builtin_voices=BUILTIN_VOICES,
                              index_languages=INDEX_LANGUAGES, emotions=EMOTIONS, arabic_samples=ARABIC_SAMPLES,
-                             import_extensions=",".join(IMPORT_EXTENSIONS), max_text=MAX_TEXT)
+                             import_extensions=",".join(IMPORT_EXTENSIONS), max_text=MAX_TEXT,
+                             studio_js_version=studio_js_version)
 
 
 @app.middleware("http")
 async def prevent_cross_site_posts(request, call_next):
-    origin = request.headers.get("origin")
-    if request.method == "POST" and origin and urlsplit(origin).netloc != request.headers.get("host"):
-        return JSONResponse({"detail": "Submit from the studio page."}, status_code=403)
+    if request.method == "POST":
+        site = request.headers.get("sec-fetch-site")
+        origin = request.headers.get("origin", "").lower()
+        try:
+            same_host = bool(origin) and urlsplit(origin).netloc == request.headers.get("host", "").lower()
+        except ValueError:
+            same_host = False
+        # Browsers compare the public origin before the proxy can change the upstream Host.
+        if site in {"same-site", "cross-site"} or (
+                origin and site != "same-origin" and not same_host and origin not in trusted_origins):
+            return JSONResponse({"detail": "Open the studio directly and submit from that page."}, status_code=403)
     return await call_next(request)
 
 
@@ -86,8 +101,10 @@ def reference_file(uid, key):
 def render(request, template, **data):
     profile = current_user(request)
     response = templates.TemplateResponse(request, template, {"profile": profile, **data})
-    if data.get("page") and request.cookies.get("studio_profile") != str(profile["id"]):
-        remember_profile(response, profile["id"])
+    if data.get("page"):
+        response.headers["Cache-Control"] = "private, no-store"
+        if request.cookies.get("studio_profile") != str(profile["id"]):
+            remember_profile(response, profile["id"])
     return response
 
 
@@ -139,7 +156,8 @@ def health():
 
 
 @app.get("/", response_class=HTMLResponse)
-def studio(request: Request, model: str = "qwen", preset: int | None = None, reuse: str | None = None):
+def studio(request: Request, model: str = "qwen", preset: int | None = None, reuse: str | None = None,
+           uploaded_voice: str = "", uploaded_emotion: str = ""):
     uid = current_user(request)["id"]
     saved = one("SELECT * FROM presets WHERE id=? AND user_id=?", (preset, uid)) if preset else None
     previous = job_for(uid, reuse) if reuse else None
@@ -157,6 +175,10 @@ def studio(request: Request, model: str = "qwen", preset: int | None = None, reu
         config["voice_id"] = previous_voice
     if config.get("emo_voice") and not reference_file(uid, config["emo_voice"]):
         config["emo_voice"] = ""
+    if model in {"lahgtna", "index"} and uploaded_voice and reference_file(uid, uploaded_voice):
+        config["voice_id"] = uploaded_voice
+    if model == "index" and uploaded_emotion and reference_file(uid, uploaded_emotion):
+        config.update(emo_mode="audio", emo_voice=uploaded_emotion)
     return render(request, "studio.html", page="studio", model=model, config=config, reused=previous, previous_voice=previous_voice,
                   text=previous["script"] if previous else "", jobs=history(uid, limit=8), state=health_data(), **lookups(uid))
 
@@ -186,10 +208,10 @@ def library(request: Request, project: str = ""):
 
 
 @app.get("/voices", response_class=HTMLResponse)
-def voices_library(request: Request):
+def voices_library(request: Request, uploaded: int = 0, skipped: int = 0):
     voices = rows("SELECT * FROM voices WHERE user_id=? ORDER BY name COLLATE NOCASE, created DESC",
                   (current_user(request)["id"],))
-    return render(request, "voices.html", page="voices", voices=voices)
+    return render(request, "voices.html", page="voices", voices=voices, uploaded=uploaded, skipped=skipped)
 
 
 @app.post("/import-text")
@@ -216,15 +238,31 @@ def reference_audio(dialect: str):
 @app.post("/voices/upload")
 async def upload_voice(request: Request):
     uid = current_user(request)["id"]
-    async with request.form(max_files=1, max_fields=0) as form:
-        upload = form.get("reference")
-        if not isinstance(upload, UploadFile) or not upload.filename:
-            raise HTTPException(400, "Choose a reference audio file.")
-        try:
-            key = await run_in_threadpool(store_voice, uid, upload)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-    return one("SELECT id,name FROM voices WHERE id=? AND user_id=?", (key, uid))
+    try:
+        async with request.form(max_fields=1) as form:
+            view = form.get("return_view")
+            native = view in {"voices", "lahgtna", "index", "index-emotion"}
+            files = [file for file in form.getlist("reference") if isinstance(file, UploadFile) and file.filename]
+            if not files or (len(files) > 1 and view != "voices"):
+                raise HTTPException(400, "Choose a reference audio file.")
+            saved = []
+            errors = []
+            for file in files:
+                try:
+                    saved.append(await run_in_threadpool(store_voice, uid, file))
+                except ValueError as exc:
+                    errors.append(str(exc))
+            if not saved:
+                raise HTTPException(400, errors[0])
+    except ClientDisconnect as exc:
+        raise HTTPException(400, "The upload connection closed before the file arrived.") from exc
+    if not native:
+        return one("SELECT id,name FROM voices WHERE id=? AND user_id=?", (saved[0], uid))
+    if view == "voices":
+        return RedirectResponse(f"/voices?uploaded={len(saved)}&skipped={len(errors)}", 303)
+    model = "index" if view == "index-emotion" else view
+    field = "uploaded_emotion" if view == "index-emotion" else "uploaded_voice"
+    return RedirectResponse("/?" + urlencode({"model": model, field: saved[0]}), 303)
 
 
 @app.get("/voices/{key}/audio")

@@ -25,3 +25,5 @@ Long scripts run in sequential, punctuation-aware chunks. PCM is written to disk
 The Voices page keeps original uploads for playback and download. Lahgtna uses the first 30 seconds as its conditioning clip. Studio uploads and microphone clips also enter Voices. Drop text, Markdown, DOCX, ODT, RTF, and text-based PDFs into the script editor. PDF import uses Poppler's `pdftotext`.
 
 Voice uploads begin on selection. A tab-local draft preserves text and per-model settings until the page is manually reloaded. Library MP3 share copies expire after one day, with hourly file cleanup.
+
+For a reverse proxy that rewrites the upstream Host header, set `TTS_TRUSTED_ORIGINS` to the comma-separated public origins, including the HTTPS scheme. Visitors can click **Upload** to retry a selected voice file or submit it with JavaScript disabled.

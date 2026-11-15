@@ -9,7 +9,7 @@
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/studio.css">
   <script defer src="/static/htmx.min.js"></script>
-  <script defer src="/static/studio.js"></script>
+  <script defer src="/static/studio.js?v={{ studio_js_version }}"></script>
   {% if page == 'library' %}<script defer src="/static/library.js"></script>{% endif %}
 </head>
 <body data-profile="{{ profile.id }}">

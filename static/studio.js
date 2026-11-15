@@ -93,9 +93,21 @@ function uploadFile(url, field, file, onProgress) {
     xhr.upload.onload = () => onProgress(1);
     xhr.onload = () => {
       if (xhr.status === 200 && xhr.response) resolve(xhr.response);
-      else reject(new Error(file.name + ': ' + (xhr.response?.detail || 'Upload failed.')));
+      else {
+        const failures = {
+          200: 'The server returned a page instead of an upload receipt. Check your sign-in.',
+          401: 'Your sign-in is required to upload. Sign in again and retry.',
+          403: 'This upload was refused. Check your sign-in and open the studio directly.',
+          413: 'The proxy rejected the file size. Try a smaller file.',
+          502: 'The proxy could not reach the studio. Press Upload to retry.',
+          504: 'The proxy timed out. Press Upload to retry.',
+        };
+        const detail = xhr.response?.detail;
+        reject(new Error(file.name + ': ' + (typeof detail === 'string' ? detail :
+          failures[xhr.status] || 'Upload failed (HTTP ' + xhr.status + ').')));
+      }
     };
-    xhr.onerror = () => reject(new Error('Connection lost during upload.'));
+    xhr.onerror = xhr.onabort = () => reject(new Error(file.name + ': Connection lost during upload. Press Upload to retry.'));
     xhr.send(form);
   });
 }
@@ -195,20 +207,27 @@ function addVoice(option, chosen) {
   previewReference();
 }
 
-function uploadStudioReference(file, selected) {
+function uploadStudioReference(input) {
+  const file = input?.files[0];
   if (!file || voiceUpload) return;
+  const selected = input.id === 'reference' ? 'voice-id' : 'emotion-voice';
   const status = document.querySelector('#reference-status');
   const progress = document.querySelector('#reference-upload-progress');
-  const inputs = [...studioFields.querySelectorAll('input[type=file]')];
+  const inputs = [...studioFields.querySelectorAll('input[type=file],button[name=return_view]')];
   modelSelect.disabled = true;
   inputs.forEach(input => { input.disabled = true; });
   status.hidden = true;
   showProgress(progress, 'Uploading ' + file.name, 0);
   voiceUpload = uploadVoice(file, progress, voice => {
     addVoice(voice, selected);
+    input.value = '';
+    status.className = 'notice-ok';
     status.textContent = 'Saved ' + voice.name;
     rememberDraft();
-  }).catch(error => { status.textContent = error.message; }).finally(() => {
+  }).catch(error => {
+    status.className = 'notice-error';
+    status.textContent = error.message;
+  }).finally(() => {
     status.hidden = false;
     progress.hidden = true;
     modelSelect.disabled = false;
@@ -240,7 +259,10 @@ async function record(button) {
       const input = document.querySelector('#reference');
       if (!input || !button.isConnected) return;
       const ext = active.mimeType.includes('mp4') ? 'm4a' : active.mimeType.includes('ogg') ? 'ogg' : 'webm';
-      uploadStudioReference(new File(chunks, 'Recording.' + ext, { type: active.mimeType }), 'voice-id');
+      const recording = new DataTransfer();
+      recording.items.add(new File(chunks, 'Recording.' + ext, { type: active.mimeType }));
+      input.files = recording.files;
+      uploadStudioReference(input);
     };
     active.start();
     button.textContent = 'Stop recording';
@@ -255,6 +277,13 @@ if (editor) {
   restore(studioForm, draft.common);
   const current = studioFields.firstElementChild.dataset.model;
   restore(studioFields, draft.models[current]);
+  const uploadedVoice = document.querySelector('#voice-id option[value="' + CSS.escape(studioForm.dataset.uploadedVoice) + '"]');
+  if (studioForm.dataset.uploadedVoice && uploadedVoice) uploadedVoice.selected = true;
+  const uploadedEmotion = document.querySelector('#emotion-voice option[value="' + CSS.escape(studioForm.dataset.uploadedEmotion) + '"]');
+  if (studioForm.dataset.uploadedEmotion && uploadedEmotion) {
+    uploadedEmotion.selected = true;
+    document.querySelector('#emotion-mode').value = 'audio';
+  }
   if (draft.model && draft.model !== current && [...modelSelect.options].some(option => option.value === draft.model)) {
     modelSelect.value = draft.model;
     window.addEventListener('DOMContentLoaded', () => htmx.trigger(modelSelect, 'change'), {once: true});
@@ -298,8 +327,7 @@ document.addEventListener('change', (event) => {
   if (el.id === 'load-preset' && el.value) location.assign(`/?preset=${encodeURIComponent(el.value)}`);
   if (['dialect', 'voice-id', 'emotion-voice', 'emotion-mode'].includes(el.id)) refreshModelUi();
   if (['reference', 'emotion-reference'].includes(el.id)) {
-    uploadStudioReference(el.files[0], el.id === 'reference' ? 'voice-id' : 'emotion-voice');
-    el.value = '';
+    uploadStudioReference(el);
   }
   if (el.id === 'import-text' && el.files[0]) {
     importFiles([...el.files]);
@@ -312,35 +340,42 @@ if (libraryFile) {
   const name = document.querySelector('#new-voice-name');
   const progress = document.querySelector('#voice-upload-progress');
   const status = document.querySelector('#voice-notice');
+  const button = libraryFile.form.querySelector('button');
   let latestVoice;
+  let retryFiles = [];
   const refresh = async () => {
     const response = await fetch('/voices');
     if (!response.ok) throw new Error('Refresh Voices to see the latest clips.');
     const page = new DOMParser().parseFromString(await response.text(), 'text/html');
     document.querySelector('#saved-voices').replaceWith(page.querySelector('#saved-voices'));
   };
-  libraryFile.addEventListener('change', () => {
-    const files = [...libraryFile.files];
+  function uploadLibraryFiles(files) {
     if (!files.length || voiceUpload) return;
+    const single = libraryFile.files.length === 1;
     latestVoice = null;
-    name.closest('form').hidden = files.length > 1;
-    name.value = files.length === 1 ? files[0].name.replace(/\.[^.]+$/, '').slice(0, 100) : '';
+    name.closest('form').hidden = !single;
+    name.value = single ? files[0].name.replace(/\.[^.]+$/, '').slice(0, 100) : '';
     name.disabled = true;
     libraryFile.disabled = true;
+    button.disabled = true;
     status.textContent = '';
     voiceUpload = (async () => {
       let saved = 0;
       const errors = [];
+      retryFiles = [];
       for (const [index, file] of files.entries()) {
         try {
           showProgress(progress, 'Uploading ' + (index + 1) + ' of ' + files.length + ' · ' + file.name, 0);
           const item = await uploadVoice(file, progress, voice => voice);
-          if (files.length === 1) {
+          if (single) {
             latestVoice = item.id;
             name.value = item.name;
           }
           saved++;
-        } catch (error) { errors.push(error.message); }
+        } catch (error) {
+          errors.push(error.message);
+          retryFiles.push(file);
+        }
       }
       if (saved) await refresh();
       status.className = errors.length ? 'inline-message notice-error' : 'inline-message notice-ok';
@@ -348,10 +383,19 @@ if (libraryFile) {
     })().catch(error => { status.textContent = error.message; }).finally(() => {
       progress.hidden = true;
       libraryFile.disabled = false;
+      button.disabled = false;
       name.disabled = !latestVoice;
-      libraryFile.value = '';
+      if (!retryFiles.length) libraryFile.value = '';
       voiceUpload = null;
     });
+  }
+  libraryFile.addEventListener('change', () => {
+    retryFiles = [];
+    uploadLibraryFiles([...libraryFile.files]);
+  });
+  libraryFile.form.addEventListener('submit', event => {
+    event.preventDefault();
+    uploadLibraryFiles(retryFiles.length ? retryFiles : [...libraryFile.files]);
   });
   const rename = document.querySelector('#name-latest-voice');
   rename.addEventListener('submit', async event => {
@@ -378,6 +422,10 @@ document.addEventListener('click', (event) => {
 });
 
 document.addEventListener('submit', (event) => {
+  if (event.target.id === 'studio-voice-upload' || event.target.id === 'studio-emotion-upload') {
+    event.preventDefault();
+    uploadStudioReference(document.querySelector('[type=file][form="' + event.target.id + '"]'));
+  }
   const message = event.target.dataset.confirm;
   if (message && !window.confirm(message)) event.preventDefault();
 });
