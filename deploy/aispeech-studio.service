@@ -1,0 +1,17 @@
+[Unit]
+Description=AI Speech Studio
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/aispeech/tts-studio
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-%h/.config/aispeech-studio.env
+ExecStart=%h/aispeech/tts-studio/.runtime/web/bin/python -m uvicorn app:app --host 127.0.0.1 --port 7860 --workers 1 --no-access-log
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+UMask=0077
+
+[Install]
+WantedBy=default.target

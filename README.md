@@ -1,10 +1,12 @@
 # AI Speech Studio
 
-A local GPU speech studio for Lahgtna Chatterbox, Qwen3-TTS 12 Hz 1.7B CustomVoice, and IndexTTS 2.5. It uses FastAPI, Jinja, vendored HTMX, and a SQLite queue and library.
+A local GPU speech studio for Qwen3-TTS CustomVoice and Base, Lahgtna Chatterbox, Chatterbox Multilingual V3, Higgs TTS 3, and IndexTTS 2.5. It uses FastAPI, Jinja, vendored HTMX, and a SQLite queue and library.
+
+See the [Linux setup guide](deploy/README.md) for startup, model installation and an example systemd service.
 
 ## Service
 
-The app runs from `/opt/aispeech/tts-studio` on port 7860. Use `systemctl status aispeech-studio` and `journalctl -u aispeech-studio` for service logs. Model errors go to `data/worker.log`.
+The example service listens on port 7860. Use `systemctl --user status aispeech-studio` and `journalctl --user -u aispeech-studio` for service logs. Model errors go to `data/worker.log`.
 
 Anyone who can reach the port can use the app. Profiles organize the library. Microphone recording requires HTTPS or localhost. Audio uploads work over LAN HTTP.
 
@@ -18,7 +20,7 @@ Anyone who can reach the port can use the app. Profiles organize the library. Mi
 
 ### IndexTTS American English references
 
-The clips in `data/references` are original single-speaker recordings from speech synthesis datasets released under CC0 1.0. They were trimmed at the edges, converted to mono 24 kHz lossless FLAC, and peak-adjusted. The two-utterance references have a brief pause at the join.
+These optional single-speaker references come from speech synthesis datasets released under CC0 1.0. Obtain and prepare them separately if desired.
 
 | Reference | Dataset and original clip IDs | Duration |
 | --- | --- | ---: |
