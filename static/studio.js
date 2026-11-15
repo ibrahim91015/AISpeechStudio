@@ -4,6 +4,7 @@ let importing = false;
 let voiceUpload = null;
 const draftPrefix = 'aispeech-draft:';
 const draftKey = draftPrefix + document.body.dataset.profile;
+const ebookKey = draftKey + ':ebooks';
 const studioForm = document.querySelector('#speech-form');
 const studioFields = document.querySelector('#fields');
 const modelSelect = document.querySelector('#model');
@@ -112,12 +113,94 @@ function uploadFile(url, field, file, onProgress) {
   });
 }
 
+const ebookPicker = document.querySelector('#ebook-picker');
+let ebooks = [];
+
+if (ebookPicker) {
+  const bookSelect = ebookPicker.querySelector('#ebook-file');
+  const mode = ebookPicker.querySelector('#ebook-mode');
+  const from = ebookPicker.querySelector('#ebook-from');
+  const through = ebookPicker.querySelector('#ebook-through');
+  const status = ebookPicker.querySelector('#ebook-range-status');
+  const load = ebookPicker.querySelector('#load-ebook-text');
+
+  function activeBook() {
+    return ebooks[Number(bookSelect.value)];
+  }
+
+  function rangeText() {
+    const book = activeBook();
+    const entries = book[mode.value];
+    return book.text.slice(entries[Number(from.value)].start, entries[Number(through.value)].end).trim();
+  }
+
+  function showRange() {
+    const length = rangeText().length;
+    load.disabled = !length || length > editor.maxLength;
+    status.textContent = length > editor.maxLength ? 'Choose a shorter range (up to 150,000 characters).' :
+      length.toLocaleString() + ' characters';
+  }
+
+  function showChoices() {
+    const book = activeBook();
+    mode.options[2].textContent = book.estimatedPages ? 'Pages (estimated)' : 'Pages';
+    for (const select of [from, through]) {
+      select.replaceChildren(...book[mode.value].map((entry, index) => new Option(entry.label, index)));
+    }
+    showRange();
+  }
+
+  function showBooks() {
+    ebookPicker.hidden = !ebooks.length;
+    if (!ebooks.length) return;
+    bookSelect.replaceChildren(...ebooks.map((book, index) => new Option(book.name, index)));
+    ebookPicker.querySelector('#ebook-file-row').hidden = ebooks.length === 1;
+    mode.value = 'chapters';
+    showChoices();
+  }
+
+  function saveBooks() {
+    try {
+      sessionStorage.removeItem(ebookKey);
+      if (ebooks.length) sessionStorage.setItem(ebookKey, JSON.stringify(ebooks));
+    } catch { /* Large imports stay available while this page is open. */ }
+  }
+
+  try { ebooks = JSON.parse(sessionStorage.getItem(ebookKey)) || []; } catch {}
+  showBooks();
+  ebookPicker.addEventListener('booksImported', event => {
+    ebooks = event.detail;
+    saveBooks();
+    showBooks();
+    if (ebooks.length) mode.focus();
+  });
+  bookSelect.addEventListener('change', showChoices);
+  mode.addEventListener('change', showChoices);
+  from.addEventListener('change', () => {
+    if (from.selectedIndex > through.selectedIndex) through.value = from.value;
+    showRange();
+  });
+  through.addEventListener('change', () => {
+    if (from.selectedIndex > through.selectedIndex) from.value = through.value;
+    showRange();
+  });
+  load.addEventListener('click', () => replaceText(rangeText()));
+  ebookPicker.querySelector('#close-ebook').addEventListener('click', () => {
+    ebooks = [];
+    saveBooks();
+    showBooks();
+    document.querySelector('#import-text').focus();
+  });
+}
+
 async function importFiles(files) {
   if (!files.length || importing) return;
   const status = document.querySelector('#import-status');
   const progress = document.querySelector('#import-progress');
   const initial = editor.value;
   const texts = [];
+  const books = [];
+  const warnings = [];
   const total = files.reduce((sum, file) => sum + file.size, 0);
   let uploaded = 0;
   let length = 0;
@@ -128,19 +211,29 @@ async function importFiles(files) {
   try {
     for (const file of files) {
       if (file.size > 12 * 1024 * 1024) throw new Error(file.name + ' exceeds 12 MB.');
-      const { text } = await uploadFile('/import-text', 'document', file, (fraction) => {
+      const result = await uploadFile('/import-text', 'document', file, (fraction) => {
         const percent = fraction === null || !total ? null : Math.floor(100 * (uploaded + fraction * file.size) / total);
         showProgress(progress, fraction === 1 ? 'Reading ' + file.name : 'Uploading documents', percent);
       });
       uploaded += file.size;
+      if (Array.isArray(result.chapters)) {
+        books.push({...result, name: file.name});
+        continue;
+      }
+      const {text} = result;
+      warnings.push(...(result.warnings || []));
       length += text.length + (texts.length ? 2 : 0);
       if (length > editor.maxLength) throw new Error('The combined text exceeds 150,000 characters.');
       texts.push(text);
     }
-    if (editor.value !== initial) throw new Error('The script changed during import. Drop the files again to replace it.');
-    replaceText(texts.join('\n\n'));
+    if (texts.length) {
+      if (editor.value !== initial) throw new Error('The script changed during import. Drop the files again to replace it.');
+      replaceText(texts.join('\n\n'));
+    }
     status.classList.add('notice-ok');
-    status.textContent = files.length === 1 ? 'Imported ' + files[0].name + '.' : 'Imported ' + files.length + ' files.';
+    const imported = files.length === 1 ? 'Imported ' + files[0].name + '.' : 'Imported ' + files.length + ' files.';
+    status.textContent = [imported, ...new Set(warnings)].join(' ');
+    ebookPicker.dispatchEvent(new CustomEvent('booksImported', {detail: books}));
   } catch (error) {
     status.classList.add('notice-error');
     status.textContent = error.message;

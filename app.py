@@ -472,10 +472,10 @@ async def extract_text(request: Request):
         if not isinstance(upload, UploadFile) or not upload.filename:
             raise HTTPException(400, "Choose a text or document file.")
         try:
-            text = await run_in_threadpool(import_document, upload)
+            result = await run_in_threadpool(import_document, upload)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-    return {"text": text}
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/references/{dialect}")

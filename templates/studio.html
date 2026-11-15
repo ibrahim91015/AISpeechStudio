@@ -16,6 +16,16 @@
     <label class="sr-only" for="script">Script text</label>
     <textarea id="script" name="script" dir="auto" rows="12" maxlength="{{ max_text }}" placeholder="Enter the text you want to hear…" spellcheck="false" aria-describedby="import-help import-status">{{ text }}</textarea>
     <p id="import-status" aria-live="polite" class="inline-message" hidden></p>
+    <section id="ebook-picker" aria-labelledby="ebook-picker-title" hidden>
+      <div class="ebook-picker-head"><strong id="ebook-picker-title">Choose ebook text</strong><button type="button" class="quiet" id="close-ebook">Close</button></div>
+      <label id="ebook-file-row" hidden>Book <select id="ebook-file"></select></label>
+      <div class="ebook-picker-fields">
+        <label>Browse by <select id="ebook-mode"><option value="chapters">Chapters</option><option value="sections">Sections</option><option value="pages">Pages</option></select></label>
+        <label>From <select id="ebook-from"></select></label>
+        <label>Through <select id="ebook-through"></select></label>
+      </div>
+      <div class="ebook-picker-head"><button type="button" class="button tonal" id="load-ebook-text">Load into script</button><small id="ebook-range-status" aria-live="polite"></small></div>
+    </section>
     {% with upload_id='import-progress', upload_label='Uploading documents' %}{% include 'upload_progress.html' %}{% endwith %}
     <div class="editor-bar"><span id="character-count" class="counter">{{ text|length }} characters</span><div class="editor-actions">
       <button class="quiet" type="button" id="sample-text"{% if model == 'lahgtna' %} hidden{% endif %}>Use sample</button>
