@@ -32,6 +32,7 @@ END_LABEL = re.compile(r"^(?:about the author|also by|copyright|contents|table o
 BY_AUTHOR = re.compile(r"^By (?:[^\W\d_]+ +){1,3}[^\W\d_]+$", re.I)
 TAIL_CONTENTS = re.compile(r"(?:^|\n\n)Table of Contents(?=\n\n|$)", re.I)
 TAIL_BIOGRAPHY = re.compile(r"(?:^|\n\n)About the Author(?=[ \n:])")
+TAIL_COPYRIGHT = re.compile(r"(?:^|\n\n)Copyright(?=[ \n©:])", re.I)
 
 
 class BookHTML(HTMLParser):
@@ -42,9 +43,11 @@ class BookHTML(HTMLParser):
         self.gap = ""
         self.stack = []
         self.anchors = {}
+        self.links = []
         self.pages = []
         self.headings = []
         self.heading = None
+        self.link = None
 
     def handle_starttag(self, tag, attributes):
         attrs = dict(attributes)
@@ -73,6 +76,8 @@ class BookHTML(HTMLParser):
                     self.gap = " "
                 if tag in HEADINGS:
                     self.heading = (tag, self.length, len(self.chunks))
+                if tag == "a" and attrs.get("href"):
+                    self.link = (self.length, len(self.chunks), attrs["href"])
         if tag not in VOID:
             self.stack.append((tag, hidden))
 
@@ -94,6 +99,12 @@ class BookHTML(HTMLParser):
                     if label:
                         self.headings.append((start, label[:150]))
                     self.heading = None
+                if not hidden and tag == "a" and self.link:
+                    start, chunk, href = self.link
+                    label = "".join(self.chunks[chunk:]).strip()
+                    if label and len(label) <= 150:
+                        self.links.append((start, href, label))
+                    self.link = None
                 return
 
     def handle_data(self, data):
@@ -177,6 +188,20 @@ def ordered_marks(entries):
     return sorted(unique.items())
 
 
+def linked_contents(links, locations):
+    # Some old MOBI files contain a working printed TOC but have an empty NCX.
+    forward = [(origin, locations[target], label) for origin, target, label in links
+               if target[1] and target in locations and origin < locations[target]]
+    main = [(origin, target) for origin, target, label in forward if STORY_LABEL.match(label)]
+    if not main:
+        return []
+    first_text = min(target for _, target in main)
+    if len({target for origin, target in main if origin < first_text}) < 3:
+        return []
+    return [(target, label) for origin, target, label in forward
+            if origin < first_text <= target]
+
+
 def approximate_pages(text, start, end):
     marks = []
     while start < end:
@@ -214,6 +239,9 @@ def section_ranges(text, chapters, headings, pages, files):
     if contents:
         biography = TAIL_BIOGRAPHY.search(text, max(last_chapter, contents.start() - 5_000), contents.start())
         end = biography.start() if biography else contents.start()
+    copyright_notice = TAIL_COPYRIGHT.search(text, max(last_chapter, end - 12_000), end)
+    if copyright_notice and re.search(r"\bISBN\b|all rights reserved", text[copyright_notice.start():end], re.I):
+        end = copyright_notice.start()
     book = text[start:end]
     if not book.strip():
         raise ValueError("No readable text found in the ebook’s reading order.")
@@ -278,7 +306,7 @@ def epub_content(data, decode, limit, max_text):
         extras = {book_link(package_path, ref.attrib["href"])[0]
                   for ref in package.findall("./{*}guide/{*}reference")
                   if ref.get("type") in METADATA_TYPES and ref.get("href")}
-        locations, headings, pages, files, blocks = {}, [], [], [], []
+        locations, headings, pages, files, blocks, links = {}, [], [], [], [], []
         position = archive_size = characters = 0
         for ref in spine.findall("./{*}itemref"):
             item = manifest.get(ref.get("idref"))
@@ -304,6 +332,7 @@ def epub_content(data, decode, limit, max_text):
                     continue
             for name, offset in parser.anchors.items():
                 locations[(path, name)] = position + offset
+            links.extend((position + offset, book_link(path, href), label) for offset, href, label in parser.links)
             headings.extend((position + offset, label) for offset, label in parser.headings)
             pages.extend((position + offset, label) for offset, label in parser.pages)
             if text:
@@ -314,6 +343,8 @@ def epub_content(data, decode, limit, max_text):
                     raise ValueError("The ebook exceeds 5 million characters. Split it before importing.")
                 blocks.append(text)
         chapters = [(locations[link], label) for link, label in toc if link in locations]
+        if not chapters:
+            chapters = linked_contents(links, locations)
         for link, label in page_list:
             if link in locations:
                 pages.insert(0, (locations[link], label))
