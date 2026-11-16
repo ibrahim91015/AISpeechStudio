@@ -1,0 +1,35 @@
+{
+  "downloads": {
+    "saudi-ref.wav": "https://huggingface.co/spaces/oddadmix/lahgtna-chatterbox-demo/resolve/25e5e82/saudi-ref.wav",
+    "mor-ref.wav": "https://huggingface.co/spaces/oddadmix/lahgtna-chatterbox-demo/resolve/25e5e82/mor-ref.wav",
+    "iraqi-ref.wav": "https://huggingface.co/spaces/oddadmix/lahgtna-chatterbox-demo/resolve/25e5e82/iraqi-ref.wav",
+    "leb-ref.wav": "https://huggingface.co/spaces/oddadmix/lahgtna-chatterbox-demo/resolve/25e5e82/leb-ref.wav",
+    "fdddf1f2a317e626a0db94d6d7d92e772039121f120787c80be2250c09999ec1.wav": "https://huggingface.co/spaces/oddadmix/lahgtna-chatterbox-demo/resolve/25e5e82/fdddf1f2a317e626a0db94d6d7d92e772039121f120787c80be2250c09999ec1.wav",
+    "lib-ref.wav": "https://huggingface.co/spaces/oddadmix/lahgtna-chatterbox-demo/resolve/25e5e82/lib-ref.wav",
+    "syrian-ref.wav": "https://huggingface.co/spaces/oddadmix/lahgtna-chatterbox-demo/resolve/25e5e82/syrian-ref.wav",
+    "tun-ref.wav": "https://huggingface.co/spaces/oddadmix/lahgtna-chatterbox-demo/resolve/25e5e82/tun-ref.wav",
+    "pal-ref.wav": "https://huggingface.co/spaces/oddadmix/lahgtna-chatterbox-demo/resolve/25e5e82/pal-ref.wav",
+    "egypt-ref.wav": "https://huggingface.co/spaces/oddadmix/lahgtna-chatterbox-demo/resolve/25e5e82/egypt-ref.wav",
+    "demo-chatterbox-en.flac": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/en_f1.flac",
+    "ar_prompts2.flac": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/ar_f/ar_prompts2.flac",
+    "demo-chatterbox-ar-alternate.flac": "https://storage.googleapis.com/chatterbox-demo-samples/mtl_prompts/ar_m1.flac",
+    "demo-qwen-test.flac": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-TTS-Repo/clone_2.wav",
+    "demo-index-paper-ex1-ar-100-audio-prompt.flac": "https://index-tts.github.io/index-tts2-5.github.io/ex1/ar_100/audio_prompt.aac",
+    "demo-index-paper-ex1-ar-11-audio-prompt.flac": "https://index-tts.github.io/index-tts2-5.github.io/ex1/ar_11/audio_prompt.aac",
+    "demo-index-paper-ex1-en-163-audio-prompt.flac": "https://index-tts.github.io/index-tts2-5.github.io/ex1/en_163/audio_prompt.aac",
+    "demo-index-paper-ex1-en-338-audio-prompt.flac": "https://index-tts.github.io/index-tts2-5.github.io/ex1/en_338/audio_prompt.aac",
+    "demo-index-paper-ex1-en-457-audio-prompt.flac": "https://index-tts.github.io/index-tts2-5.github.io/ex1/en_457/audio_prompt.aac",
+    "demo-index-paper-ex2-en-prompt-audio-11.flac": "https://index-tts.github.io/index-tts2-5.github.io/ex2/en/prompt_audio_11.aac",
+    "demo-index-paper-ex2-en-prompt-audio-17.flac": "https://index-tts.github.io/index-tts2-5.github.io/ex2/en/prompt_audio_17.aac",
+    "demo-index-paper-ex2-en-prompt-audio-36.flac": "https://index-tts.github.io/index-tts2-5.github.io/ex2/en/prompt_audio_36.aac",
+    "demo-higgs-en-man.flac": "https://raw.githubusercontent.com/boson-ai/higgs-audio/main/examples/voice_prompts/en_man.wav",
+    "demo-higgs-en-woman.flac": "https://raw.githubusercontent.com/boson-ai/higgs-audio/main/examples/voice_prompts/en_woman.wav",
+    "demo-higgs-q8-cookbook.flac": "https://raw.githubusercontent.com/0xShug0/audio.cpp/v0.9.5/assets/resources/b.wav"
+  },
+  "manual": {
+    "demo-index-paper-ex2-en-prompt-audio-11-sad.flac": {
+      "source": "https://sail.usc.edu/iemocap/iemocap_release.htm",
+      "example": "https://index-tts.github.io/index-tts2-5.github.io/"
+    }
+  }
+}

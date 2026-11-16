@@ -1,9 +1,8 @@
 """Fetch optional model weights into the layout used by the Studio adapters."""
 
 import argparse
+import shutil
 from pathlib import Path
-
-from huggingface_hub import snapshot_download
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT.parent
@@ -36,23 +35,59 @@ MODELS = {
 }
 
 
+def index_dependencies(root, snapshot, download):
+    cache = root / "hf_cache"
+    for repo, folder, patterns in (
+        ("facebook/w2v-bert-2.0", "w2v-bert-2.0", ["config.json", "preprocessor_config.json", "model.safetensors"]),
+        ("nvidia/bigvgan_v2_22khz_80band_256x", "bigvgan", ["config.json", "bigvgan_generator.pt"]),
+    ):
+        snapshot(repo, local_dir=cache / folder, allow_patterns=patterns)
+    for repo, filename, destination in (
+        ("amphion/MaskGCT", "semantic_codec/model.safetensors", "semantic_codec_model.safetensors"),
+        ("funasr/campplus", "campplus_cn_common.bin", "campplus_cn_common.bin"),
+    ):
+        target = cache / destination
+        if not target.is_file():
+            cache.mkdir(parents=True, exist_ok=True)
+            downloaded = download(repo, filename)
+            staged = target.with_suffix(".part")
+            shutil.copyfile(downloaded, staged)
+            staged.replace(target)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("models", nargs="+", choices=[*MODELS, "lahgtna"])
-    for key in parser.parse_args().models:
+    parser.add_argument("models", nargs="+", metavar="MODEL",
+                        help=", ".join([*MODELS, "lahgtna", "all"]))
+    parser.add_argument("--plan", action="store_true", help="print destinations without downloading")
+    args = parser.parse_args()
+    available = {*MODELS, "lahgtna", "all"}
+    unknown = set(args.models) - available
+    if unknown:
+        parser.error("unknown model(s): " + ", ".join(sorted(unknown)))
+    selected = [*MODELS, "lahgtna"] if "all" in args.models else list(dict.fromkeys(args.models))
+    if not args.plan:
+        try:
+            from huggingface_hub import hf_hub_download, snapshot_download
+        except ImportError:
+            parser.error("install huggingface_hub, or run with uv run --with huggingface_hub")
+    for key in selected:
         if key == "lahgtna":
-            path = snapshot_download(
-                "oddadmix/lahgtna-chatterbox-v1",
-                cache_dir=ASSETS / "huggingface" / "hub",
-                revision="main",
-            )
-        else:
-            repo, folder, revision, patterns = MODELS[key]
-            path = snapshot_download(
-                repo, local_dir=ASSETS / "models" / folder,
-                revision=revision, allow_patterns=patterns,
-            )
-        print(f"{key}: {path}", flush=True)
+            repo = "oddadmix/lahgtna-chatterbox-v1"
+            path = ASSETS / "huggingface" / "hub"
+            print(f"{key}: {repo} → {path}/models--oddadmix--lahgtna-chatterbox-v1", flush=True)
+            if not args.plan:
+                snapshot_download(repo, cache_dir=path, revision="main")
+            continue
+        repo, folder, revision, patterns = MODELS[key]
+        path = ASSETS / "models" / folder
+        print(f"{key}: {repo} → {path}", flush=True)
+        if key == "index":
+            print(f"  Auxiliary IndexTTS weights → {path / 'hf_cache'}", flush=True)
+        if not args.plan:
+            snapshot_download(repo, local_dir=path, revision=revision, allow_patterns=patterns)
+            if key == "index":
+                index_dependencies(path, snapshot_download, hf_hub_download)
 
 
 if __name__ == "__main__":

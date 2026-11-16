@@ -1,19 +1,17 @@
 # Linux setup
 
-The web app uses Linux and Python 3.11. GPU inference needs an NVIDIA CUDA environment. The web app starts with an empty database and can be used to test imports and navigation before installing any model. Profiles organize data but are not an authentication boundary. Put an authenticated reverse proxy in front of a deployment that is reachable from the internet.
+Follow the [Ubuntu quick start](../README.md#start-on-ubuntu) to install the web app and make a first recording. Keep the checkout under `~/aispeech/tts-studio` to use the example unit as supplied.
 
-```sh
-mkdir -p ~/aispeech
-git clone https://github.com/ibrahim91015/AISpeechStudio.git ~/aispeech/tts-studio
-cd ~/aispeech/tts-studio
-python3.11 -m venv .runtime/web
-.runtime/web/bin/python -m pip install -r requirements.txt
-.runtime/web/bin/python -m uvicorn app:app --host 127.0.0.1 --port 7860 --workers 1
+## Host the app
+
+The [systemd user service](aispeech-studio.service) reads `~/.config/aispeech-studio.env`. Configure an authenticated HTTPS reverse proxy that forwards to `127.0.0.1:7860`, with upload capacity above 65 MiB for multipart overhead. Add your public origin and a contact URI for Web Push.
+
+```ini
+TTS_TRUSTED_ORIGINS=https://speech.example.com
+TTS_PUSH_SUBJECT=mailto:admin@example.com
 ```
 
-Install FFmpeg, Poppler utilities, libmobi tools, and Tesseract with English and Arabic language data to use the corresponding audio and document features. On Ubuntu the package names are `ffmpeg poppler-utils libmobi-tools tesseract-ocr-eng tesseract-ocr-ara`.
-
-For a user systemd service, copy [aispeech-studio.service](aispeech-studio.service) to `~/.config/systemd/user/`, adapt the paths if needed, then run `systemctl --user daemon-reload` and `systemctl --user enable --now aispeech-studio`. To start it without an interactive login, enable systemd lingering for the service account. The sample binds to loopback. For a reverse proxy, set your HTTPS origin in `TTS_TRUSTED_ORIGINS` and a VAPID contact URI in `TTS_PUSH_SUBJECT` in `~/.config/aispeech-studio.env`. The app creates its own push keys and SQLite database on first run.
+Restart with `systemctl --user restart aispeech-studio` and view logs with `journalctl --user -u aispeech-studio`. Run `sudo loginctl enable-linger "$(id -un)"` to start the user service at boot without a login.
 
 ## Model runtimes
 
@@ -28,6 +26,19 @@ Install each Python environment separately. Use the CUDA PyTorch wheels that fit
 | Higgs TTS BF16 | `.runtime/index`, with Transformers 5.5.0 and its dependencies on `.runtime/higgs-python` | Put the native backend from [Higgs_v3-TTS-ComfyUI](https://github.com/Saganaki22/Higgs_v3-TTS-ComfyUI) v0.1.9 in `.runtime/higgs-native`. |
 | Higgs TTS Q8 | `.runtime/index` | Put the CUDA audio.cpp server and required libraries in `.runtime/higgs-cpp`. The adapter expects the executable to be named `audiocpp_server`. |
 
-Install `huggingface_hub` in a separate tool environment, then use [download_models.py](../scripts/download_models.py) to fetch only the model weights you need. For example, run `python scripts/download_models.py qwen` for CustomVoice. Run `python scripts/download_models.py --help` for all model choices. Review upstream terms before downloading. The worker runs offline and expects the assets to be present before synthesis.
+## Weight sources and destinations
 
-This repository ships no recordings. Upload your own via the Studio, or provision separately sourced reference clips under `data/references` (or the `TTS_DATA_DIR` equivalent). To register optional reference collections, populate `references/demo-clips.json` with entries containing `id`, `model`, `name`, `file`, `language`, and optionally `source`, `transcript` and `duration`. Use the model group names in `demo_voices.py`. Paths, libraries, and models for advanced adapters are installed separately.
+Paths are relative to the Studio checkout. Run `python3 scripts/download_models.py all --plan` to display them. To fetch model files, run `uv run --no-project --python 3.11 --with huggingface_hub scripts/download_models.py all`, or replace `all` with one or more keys.
+
+| Key | Source | Destination |
+| --- | --- | --- |
+| `qwen` | [Qwen CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice) | `../models/Qwen3-TTS-12Hz-1.7B-CustomVoice` |
+| `qwen_base` | [Qwen Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) | `../models/Qwen3-TTS-12Hz-1.7B-Base` |
+| `lahgtna` | [Lahgtna Chatterbox](https://huggingface.co/oddadmix/lahgtna-chatterbox-v1) | `../huggingface/hub/models--oddadmix--lahgtna-chatterbox-v1` in the Hub cache layout |
+| `dialect_router` | [Lahgtna dialect router](https://huggingface.co/oddadmix/dialect-router-v0.1) | `../models/dialect-router-v0.1` |
+| `chatterbox` | [ResembleAI/chatterbox](https://huggingface.co/ResembleAI/chatterbox) | `../models/Chatterbox-Multilingual-V3` |
+| `index` | [IndexTTS 2.5](https://huggingface.co/IndexTeam/IndexTTS-2.5) | `../models/IndexTTS-2.5`, with w2v-BERT, MaskGCT, CAMPPlus and BigVGAN under `hf_cache/` |
+| `higgs_bf16` | [Boson AI Higgs TTS 3](https://huggingface.co/bosonai/higgs-tts-3-4b) | `../models/Higgs-TTS-3-4B-BF16` |
+| `higgs_q8` | [audio.cpp Q8 GGUF](https://huggingface.co/audio-cpp/audio.cpp-gguf/tree/main/Higgs-Audio-v3-TTS-4B-GGUF) | `../models/Higgs-TTS-3-4B-Q8/Higgs-Audio-v3-TTS-4B-GGUF/` |
+
+The downloader installs the weights. Set up each model's Python environment and native runtime using the table above. For Higgs Q8, obtain the compatible CUDA build from the [audio.cpp release page](https://github.com/0xShug0/audio.cpp/releases/tag/v0.9.5). Inference runs offline after setup.

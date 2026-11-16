@@ -1,0 +1,92 @@
+{
+  "index-en-us-kathleen.flac": {
+    "text": "Hardly were our plans made public before we were met by powerful opposition. A combination of Canadian capital quickly organized and petitioned for the same privileges.",
+    "kind": "published",
+    "source": "https://github.com/rhasspy/dataset-voice-kathleen/tree/c51cb971036a127359b43c621f26ca5081eab13e/data"
+  },
+  "ar_prompts2.flac": {
+    "text": "أحمل معي أوراق إثباتي الشخصية.",
+    "kind": "machine"
+  },
+  "saudi-ref.wav": {
+    "text": "الحين أبي أطلع قرض شخصي ورحت أكثر من فرع يجيني رفض على القرض وشركتي معتمدة عندكم وسجلي في سمة 602 ولا عندي متعثرات والموظفين ما يعرفوا سبب الرفض إذا الموظف ما يعرف السبب مين يعرف السبب؟",
+    "kind": "machine"
+  },
+  "mor-ref.wav": {
+    "text": "سي مشات عند بوركابيها قالت ليه الا كنتي كتبغيني تيخطبني ودارا لا لا كتفما، ويلي ويلي ويلي علاش وها؟ تي كانت مخاصمة مع بوركابي هاد الأيام كاملة هوما كاينة عندنا نكير نكير صافي تفرقت معايا قالت ليه ما عندي ما ندير بيك هو رجع بغا يتصالح معاها قالت ليه كنتي كتبغيني كوراك جايتي خطبتيني كوراك كوراك كوراك ايوا يلاه قاليها صافي نهار لحد نجيب درنا وجو نخطبوك ليك باغا تعرفيني كنبغيك ايوا انا جاي",
+    "kind": "machine"
+  },
+  "iraqi-ref.wav": {
+    "text": "هات واحد راح يدفع مبلغ وقدره حتى يشتري ابنية تشتغل بمنهة طبعا لا يعرفها ولا تعرفها ويدري كله زيان انه مستحيل تقدر ترد لهذا المبلغ فأكيد راح يطلب شي مقابل للفلوس اللي راحت فلهذا ارجع واسيلك شنو المقابل",
+    "kind": "machine"
+  },
+  "leb-ref.wav": {
+    "text": "مرحبا، في واحد كاتب لي على الفيسبوك، ليش بتحط أخبار مسمّية؟",
+    "kind": "machine"
+  },
+  "fdddf1f2a317e626a0db94d6d7d92e772039121f120787c80be2250c09999ec1.wav": {
+    "text": "هديكي 5 مليون جنيه مقابل 50% من الشركة وممكن ينزلوا الـ 40% وده عرضي",
+    "kind": "machine"
+  },
+  "lib-ref.wav": {
+    "text": "وغالبا مصلح في كاني غلطان الحجم التمويلات اللي هو اللي هي تطلب في الحالة هذه هو صغير جدا",
+    "kind": "machine"
+  },
+  "syrian-ref.wav": {
+    "text": "وانسحبت الأرتال باتجاه المنطقة الشرقية في هذه الأثناء تقريبا",
+    "kind": "machine"
+  },
+  "tun-ref.wav": {
+    "text": "على خاطر تكون يعرف الثعلب مايراتيش عاجاتي منها كيه عمل غريب انه وقت اللي كانت في ثنية هالد جيش بش تلاحظت ان الكلب متاعها كان ينبح بطريقة مايش عادية كي انه فما حبت في الشراء هذيكا لدرجة انه عظها من سرويلة بش مايخليهاش تمشي غادي هي ماكنتش فاهمة هيدا",
+    "kind": "machine"
+  },
+  "pal-ref.wav": {
+    "text": "أنا سيجال لي كنت أنا و أنا سيطلعنا نحن وخط اللابتوب يتبعو وطلعنا أنا سيجال لي خليك هان في المستشفى",
+    "kind": "machine"
+  },
+  "egypt-ref.wav": {
+    "text": "بدأت تاخد إجراءات تحمي بيها نفسها والدها",
+    "kind": "machine"
+  },
+  "demo-chatterbox-en.flac": {
+    "text": "In this piece, we're actually playing husband and wife.",
+    "kind": "machine"
+  },
+  "demo-chatterbox-ar-alternate.flac": {
+    "text": "وتتضمن حفلات لموسيقى الجاز يحييها فنانون تونسيون وأجانب.",
+    "kind": "machine"
+  },
+  "demo-index-paper-ex1-ar-100-audio-prompt.flac": {
+    "text": "أحب موهوب مصور في حي اللبان",
+    "kind": "machine"
+  },
+  "demo-index-paper-ex1-ar-11-audio-prompt.flac": {
+    "text": "الحالة النفسية انه ممكن مناعة بتاع الجسم بشكل عام تقله بالتالي ان اي تعرض للميكروب يسهل او التهابته",
+    "kind": "machine"
+  },
+  "demo-index-paper-ex1-en-163-audio-prompt.flac": {
+    "text": "A woman lays on a sofa in a yard.",
+    "kind": "machine"
+  },
+  "demo-index-paper-ex1-en-338-audio-prompt.flac": {
+    "text": "Carrying for others, never let your bags out of your sight, especially when you are crossing international borders.",
+    "kind": "machine"
+  },
+  "demo-index-paper-ex1-en-457-audio-prompt.flac": {
+    "text": "In short, using your car is a great way to take a road trip, but seldom in itself a way to camp.",
+    "kind": "machine"
+  },
+  "demo-index-paper-ex2-en-prompt-audio-11.flac": {
+    "text": "In what bucolic school of fence he had been taught was beyond imagining.",
+    "kind": "published",
+    "source": "https://huggingface.co/jimregan/wav2vec-awb/commit/54d26b981448fc301d0e113b4cdba52ae14d42b7"
+  },
+  "demo-index-paper-ex2-en-prompt-audio-17.flac": {
+    "text": "Down there, the earth is already swelling with life.",
+    "kind": "machine"
+  },
+  "demo-index-paper-ex2-en-prompt-audio-36.flac": {
+    "text": "Why is it just like the round egg which sounds thin?",
+    "kind": "machine"
+  }
+}
